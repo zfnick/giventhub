@@ -1,9 +1,9 @@
-# Project Overview: "GitHub for Events" (Ecosystem OS)
+# Project Overview: "GitHub for Events" (gieventhub)
 
 **Context for AI Agents**: This document contains the master context, product vision, technical architecture, and UI/UX guidelines for the hackathon project. Read this thoroughly before making any architectural decisions, generating UI, or writing backend logic.
 
 ## 1. Product Vision & The "Moat"
-The goal is to build an **Ecosystem OS** that connects companies, startups, and mentors. Traditional platforms (like Luma or Eventbrite) are B2C tools optimized for single-event ticketing. Our product uses events as data-ingestion points to build a **Global Knowledge Graph** of the ecosystem.
+The goal is to build **gieventhub** that connects companies, startups, and mentors. Traditional platforms (like Luma or Eventbrite) are B2C tools optimized for single-event ticketing. Our product uses events as data-ingestion points to build a **Global Knowledge Graph** of the ecosystem.
 
 * **The Trap to Avoid:** Do not build a "Luma + LLM Wrapper". If the product only automates sending emails and creating landing pages, it fails.
 * **The Moat:** We track *relationships* across multiple events (e.g., `Startup A` was mentored by `Mentor B` at `Event C`). We allow event planners to "Open Source" their event architectures.

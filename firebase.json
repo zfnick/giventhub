@@ -1,0 +1,10 @@
+{
+  "auth": {
+    "providers": {
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "gieventhub",
+        "supportEmail": "terryong30@gmail.com"
+      }
+    }
+  }
+}
