@@ -3,7 +3,17 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from git_eventhub_agent import workspace_tools as wt
-from git_eventhub_agent.agent import root_agent
+from git_eventhub_agent.agent import (
+    calendar_agent,
+    docs_agent,
+    drive_agent,
+    forms_agent,
+    gmail_agent,
+    productivity_agent,
+    root_agent,
+    sheets_agent,
+    slides_agent,
+)
 
 
 class WorkflowSmokeTest(unittest.TestCase):
@@ -23,7 +33,6 @@ class WorkflowSmokeTest(unittest.TestCase):
                 "slides_agent",
                 "gmail_agent",
                 "calendar_agent",
-                "chat_meet_agent",
                 "productivity_agent",
             ],
         )
@@ -31,8 +40,128 @@ class WorkflowSmokeTest(unittest.TestCase):
     def test_root_agent_requires_oauth_token_tool_first(self) -> None:
         tool_names = {tool.__name__ for tool in root_agent.tools if hasattr(tool, "__name__")}
 
-        self.assertEqual(tool_names, {"require_oauth_token", "draft_workspace_actions"})
+        self.assertEqual(tool_names, {"require_oauth_token"})
         self.assertIn("AUTH FIRST", root_agent.instruction)
+        self.assertIn("oauth_token is '<registered>'", root_agent.instruction)
+        self.assertIn("do not call require_oauth_token again", root_agent.instruction)
+        self.assertIn("Always pass execute=True", root_agent.instruction)
+
+    def test_domain_agents_use_execute_true_api_contract(self) -> None:
+        for agent in root_agent.sub_agents:
+            self.assertIn("ALWAYS", agent.instruction, agent.name)
+            self.assertIn("execute=True", agent.instruction, agent.name)
+
+    def test_root_agent_routes_each_workspace_domain(self) -> None:
+        routing_expectations = {
+            "drive_agent": "Files/folders/uploads",
+            "docs_agent": "Documents",
+            "forms_agent": "Forms/surveys/registration",
+            "sheets_agent": "Spreadsheets/CRM/tracking",
+            "slides_agent": "Presentations/decks",
+            "gmail_agent": "Email/drafts",
+            "calendar_agent": "Calendar events/scheduling",
+            "productivity_agent": "Task lists/tasks",
+        }
+
+        for agent_name, routing_phrase in routing_expectations.items():
+            self.assertIn(agent_name, root_agent.instruction)
+            self.assertIn(routing_phrase, root_agent.instruction)
+
+    def test_domain_agents_own_expected_tool_groups(self) -> None:
+        expected_tools_by_agent = [
+            (
+                drive_agent,
+                {
+                    "create_drive_folder",
+                    "upload_drive_file",
+                    "upload_drive_files",
+                    "list_drive_files",
+                    "get_drive_file",
+                    "update_drive_file_metadata",
+                    "delete_drive_file",
+                },
+            ),
+            (
+                docs_agent,
+                {
+                    "create_google_doc",
+                    "get_google_doc",
+                    "update_google_doc_content",
+                    "delete_google_doc",
+                },
+            ),
+            (
+                forms_agent,
+                {
+                    "create_google_form",
+                    "get_google_form",
+                    "update_google_form",
+                    "delete_google_form",
+                },
+            ),
+            (
+                sheets_agent,
+                {
+                    "create_google_sheet",
+                    "get_google_sheet_values",
+                    "update_google_sheet_values",
+                    "update_sheet_crm",
+                    "delete_google_sheet",
+                },
+            ),
+            (
+                slides_agent,
+                {
+                    "create_google_slide_deck",
+                    "get_google_slide_deck",
+                    "update_google_slide_deck",
+                    "delete_google_slide_deck",
+                },
+            ),
+            (
+                gmail_agent,
+                {
+                    "create_gmail_draft",
+                    "get_gmail_draft",
+                    "update_gmail_draft",
+                    "delete_gmail_draft",
+                    "list_gmail_messages",
+                    "get_gmail_message",
+                    "send_gmail_message",
+                    "modify_gmail_message_labels",
+                    "trash_gmail_message",
+                },
+            ),
+            (
+                calendar_agent,
+                {
+                    "create_calendar_draft",
+                    "list_calendar_events",
+                    "get_calendar_event",
+                    "update_calendar_event",
+                    "delete_calendar_event",
+                },
+            ),
+            (
+                productivity_agent,
+                {
+                    "create_task_list",
+                    "list_task_lists",
+                    "get_task_list",
+                    "update_task_list",
+                    "delete_task_list",
+                    "create_task",
+                    "list_tasks",
+                    "get_task",
+                    "update_task",
+                    "delete_task",
+                },
+            ),
+        ]
+
+        for agent, expected_tools in expected_tools_by_agent:
+            tool_names = {tool.__name__ for tool in agent.tools}
+            self.assertEqual(tool_names, expected_tools, agent.name)
 
     def test_workspace_tool_lists_are_unique(self) -> None:
         tool_names = [tool.__name__ for tool in wt.WORKSPACE_TOOLS]
@@ -47,9 +176,10 @@ class WorkflowSmokeTest(unittest.TestCase):
         self.assertIn("create_google_sheet", tool_names)
         self.assertIn("create_gmail_draft", tool_names)
         self.assertIn("create_calendar_draft", tool_names)
-        self.assertIn("create_chat_message", tool_names)
-        self.assertIn("create_notebooklm_notebook", tool_names)
-        self.assertIn("plan_google_vids_action", tool_names)
+        self.assertIn("create_task", tool_names)
+        self.assertNotIn("create_chat_message", tool_names)
+        self.assertNotIn("create_notebooklm_notebook", tool_names)
+        self.assertNotIn("plan_google_vids_action", tool_names)
 
     def test_workspace_tools_require_oauth_before_planning(self) -> None:
         with self.assertRaisesRegex(ValueError, "oauth_token is required"):
@@ -57,6 +187,16 @@ class WorkflowSmokeTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "oauth_token is required"):
             wt.draft_workspace_actions("[]")
+
+    def test_draft_workspace_actions_skips_items_without_names(self) -> None:
+        wt.require_oauth_token("ya29.test-token")
+
+        drafts = wt.draft_workspace_actions('[{"title": "Climate Hack"}, {"evidence": ["missing name"]}]')
+
+        self.assertEqual([draft["title"] for draft in drafts], [
+            "Reconnect with Climate Hack",
+            "Follow-up meeting with Climate Hack",
+        ])
 
     def test_oauth_token_enables_planned_workspace_calls(self) -> None:
         token_result = wt.require_oauth_token("ya29.test-token")
@@ -80,13 +220,7 @@ class WorkflowSmokeTest(unittest.TestCase):
                 timezone="Asia/Kuala_Lumpur",
             ),
             wt.create_task_list("Event Tasks"),
-            wt.create_chat_space("Event War Room"),
-            wt.create_meet_space(),
-            wt.create_keep_note("Reminder", "Follow up with mentors"),
-            wt.create_notebooklm_notebook("123456789", "Event Research"),
-            wt.call_appsheet_table_action("app-id", "Events", "Find"),
-            wt.plan_google_vids_action("create_video"),
-            wt.plan_google_sites_action("create_site"),
+            wt.create_task("task-list-123", "Invite mentors"),
         ]
 
         self.assertEqual(token_result["operation"], "require_oauth_token")

@@ -45,7 +45,11 @@ from google.genai import types as genai_types  # noqa: E402
 from googleapiclient.errors import HttpError  # noqa: E402
 
 from git_eventhub_agent.agent import root_agent  # noqa: E402
-from git_eventhub_agent.workspace_tools import normalize_oauth_token, require_oauth_token  # noqa: E402
+from git_eventhub_agent.workspace_tools import (
+    normalize_oauth_token,
+    require_oauth_token,
+    _service_cache,
+)  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -229,17 +233,40 @@ runner = Runner(
 )
 
 
-async def _run_workspace_agent(user_content: genai_types.Content) -> list[dict]:
-    """Run the ADK agent once and collect text/tool response events."""
-    session = await session_service.create_session(
-        app_name="gieventhub",
-        user_id="api-caller",
-    )
+# Track active sessions per user for conversation reuse
+_user_sessions: dict[str, str] = {}  # user_id -> session_id
+
+
+async def _run_workspace_agent(user_content: genai_types.Content, user_id: str = "api-caller") -> list[dict]:
+    """Run the ADK agent and collect text/tool response events.
+
+    Reuses existing sessions per user_id so chained requests share context
+    (e.g. folder_id from step 1 carries into step 2).
+    """
+    existing_session_id = _user_sessions.get(user_id)
+    session = None
+
+    if existing_session_id:
+        try:
+            session = await session_service.get_session(
+                app_name="gieventhub",
+                user_id=user_id,
+                session_id=existing_session_id,
+            )
+        except Exception:
+            session = None
+
+    if session is None:
+        session = await session_service.create_session(
+            app_name="gieventhub",
+            user_id=user_id,
+        )
+        _user_sessions[user_id] = session.id
 
     agent_events: list[dict] = []
     async for event in runner.run_async(
         session_id=session.id,
-        user_id="api-caller",
+        user_id=user_id,
         new_message=user_content,
     ):
         part = event.content and event.content.parts and event.content.parts[0]
@@ -284,6 +311,7 @@ async def workspace(
     # 1. Resolve OAuth token (auto-refresh when "dev")
     try:
         resolved_token = _resolve_oauth_token(credentials.credentials)
+        _service_cache.clear()  # Invalidate cached API clients for new token
         require_oauth_token(resolved_token)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

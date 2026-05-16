@@ -13,6 +13,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from google.adk.agents import LlmAgent
+from google.genai import types as genai_types
 
 from .workspace_tools import (
     CALENDAR_TOOLS,
@@ -23,7 +24,6 @@ from .workspace_tools import (
     PRODUCTIVITY_TOOLS,
     SHEETS_TOOLS,
     SLIDES_TOOLS,
-    draft_workspace_actions,
     require_oauth_token,
 )
 
@@ -51,6 +51,7 @@ drive_agent = LlmAgent(
         "clear. Always return the file/folder URLs in your response."
     ),
     tools=DRIVE_TOOLS,
+    generate_content_config=genai_types.GenerateContentConfig(temperature=0),
 )
 
 docs_agent = LlmAgent(
@@ -67,6 +68,7 @@ docs_agent = LlmAgent(
         "document URL."
     ),
     tools=DOCS_TOOLS,
+    generate_content_config=genai_types.GenerateContentConfig(temperature=0),
 )
 
 forms_agent = LlmAgent(
@@ -80,9 +82,11 @@ forms_agent = LlmAgent(
         "You handle Google Forms operations. ALWAYS use execute=True — the user "
         "is calling an API and cannot respond to follow-up questions. When "
         "creating a form, add the specified questions. Default required fields "
-        "are Name and Email. Always return the form URL."
+        "are Name and Email. get_google_form accepts either a form ID or exact "
+        "form title. Always return the form title, resource ID, and URL."
     ),
     tools=FORMS_TOOLS,
+    generate_content_config=genai_types.GenerateContentConfig(temperature=0),
 )
 
 sheets_agent = LlmAgent(
@@ -99,6 +103,7 @@ sheets_agent = LlmAgent(
         "individual rows. Always return the sheet URL."
     ),
     tools=SHEETS_TOOLS,
+    generate_content_config=genai_types.GenerateContentConfig(temperature=0),
 )
 
 slides_agent = LlmAgent(
@@ -114,6 +119,7 @@ slides_agent = LlmAgent(
         "return the presentation URL."
     ),
     tools=SLIDES_TOOLS,
+    generate_content_config=genai_types.GenerateContentConfig(temperature=0),
 )
 
 gmail_agent = LlmAgent(
@@ -128,9 +134,13 @@ gmail_agent = LlmAgent(
         "calling an API and cannot respond to follow-up questions. For reading "
         "and listing emails, execute immediately. For sending emails, prefer "
         "creating a draft unless the user explicitly says 'send'. When reading "
-        "message content, use format_type='full' to get the body text."
+        "message content, use format_type='full' to get the body text. When "
+        "listing or reading messages, treat the email title as the Subject "
+        "header and summarize title, sender, date, and snippet instead of "
+        "returning ID-only lists."
     ),
     tools=GMAIL_TOOLS,
+    generate_content_config=genai_types.GenerateContentConfig(temperature=0),
 )
 
 calendar_agent = LlmAgent(
@@ -147,6 +157,7 @@ calendar_agent = LlmAgent(
         "unless explicitly asked. Always return the event link."
     ),
     tools=CALENDAR_TOOLS,
+    generate_content_config=genai_types.GenerateContentConfig(temperature=0),
 )
 
 productivity_agent = LlmAgent(
@@ -162,6 +173,7 @@ productivity_agent = LlmAgent(
         "follow-up questions."
     ),
     tools=PRODUCTIVITY_TOOLS,
+    generate_content_config=genai_types.GenerateContentConfig(temperature=0),
 )
 
 
@@ -178,7 +190,8 @@ root_agent = LlmAgent(
         "EXECUTION MODE:\n"
         "This is an API — there is NO interactive back-and-forth with the user. "
         "You MUST execute operations immediately. NEVER ask 'would you like me "
-        "to execute?' or 'shall I proceed?'. The user's prompt IS the approval. "
+        "to execute?', 'shall I proceed?', or 'do you want me to...'. "
+        "The user's prompt IS the approval. "
         "Always pass execute=True to every tool call.\n\n"
         "INPUT CONTRACT:\n"
         "Every request from the backend includes:\n"
@@ -204,21 +217,36 @@ root_agent = LlmAgent(
         "- Email/drafts → gmail_agent\n"
         "- Calendar events/scheduling → calendar_agent\n"
         "- Task lists/tasks → productivity_agent\n\n"
-        "MULTI-ASSET REQUESTS:\n"
-        "For requests like 'set up a hackathon workspace', delegate to each "
-        "domain agent in sequence: first create the Drive folder, then create "
-        "docs/forms/sheets inside it. Pass the folder_id from drive_agent to "
-        "subsequent agents so all assets live in the same folder.\n\n"
+        "MULTI-ASSET REQUESTS (CRITICAL):\n"
+        "For requests that create multiple assets (e.g. 'set up a hackathon "
+        "workspace'):\n"
+        "1. ALWAYS create the Drive folder FIRST via drive_agent.\n"
+        "2. Extract the folder resource_id from the drive_agent response.\n"
+        "3. Pass that resource_id as folder_id to EVERY subsequent create call "
+        "(docs, forms, sheets, slides). NEVER create an asset without folder_id "
+        "when a folder was created in the same request.\n"
+        "4. Delegate to each domain agent in sequence — do NOT try to call "
+        "multiple agents in parallel.\n"
+        "5. When passing context to a sub-agent, include the exact folder_id "
+        "value, not a reference like 'the folder I just created'.\n\n"
         "FILE HANDLING:\n"
         "When a file is attached for context, parse its contents and use it to "
         "inform the operation. For example, a playbook JSON defines which assets "
         "to create and what content to populate them with. When the user asks to "
         "store attached files, route to drive_agent for single or batch upload.\n\n"
+        "RESPONSE FORMAT:\n"
+        "After completing all operations, provide a concise summary listing:\n"
+        "- Each asset created/read/updated with its title and URL\n"
+        "- Any errors encountered\n"
+        "Do NOT repeat the full API response JSON. Keep the summary human-readable.\n\n"
         "SAFETY:\n"
         "- Never claim an action was executed unless a tool returned executed=true.\n"
-        "- For destructive operations (permanent delete), add a warning in the response."
+        "- For destructive operations (permanent delete), add a warning in the response.\n"
+        "- After creating a resource, include its title, resource_id, and URL. "
+        "If the user gives a resource title instead of an ID, resolve it first "
+        "when the relevant tool supports title lookup."
     ),
-    tools=[require_oauth_token, draft_workspace_actions],
+    tools=[require_oauth_token],
     sub_agents=[
         drive_agent,
         docs_agent,
@@ -229,4 +257,5 @@ root_agent = LlmAgent(
         calendar_agent,
         productivity_agent,
     ],
+    generate_content_config=genai_types.GenerateContentConfig(temperature=0),
 )

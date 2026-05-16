@@ -20,6 +20,7 @@ from .schemas import WorkspaceDraft
 
 DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 GOOGLE_DOC_MIME_TYPE = "application/vnd.google-apps.document"
+GOOGLE_FORM_MIME_TYPE = "application/vnd.google-apps.form"
 GOOGLE_SLIDES_MIME_TYPE = "application/vnd.google-apps.presentation"
 GOOGLE_SHEET_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
 OAUTH_TOKEN_REQUIRED_MESSAGE = "oauth_token is required before planning or executing Google Workspace actions."
@@ -49,6 +50,10 @@ def _workspace_url(kind: str, resource_id: str) -> str:
         "sheet": "https://docs.google.com/spreadsheets/d/{resource_id}/edit",
     }
     return urls[kind].format(resource_id=resource_id)
+
+
+def _drive_query_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
 def normalize_oauth_token(oauth_token: str) -> str:
@@ -146,17 +151,31 @@ class _StaticCredentials(google.auth.credentials.Credentials):
         return False
 
 
+_service_cache: dict[tuple[str, str, str], Any] = {}
+
+
 def _google_service(api_name: str, version: str) -> Any:
     """Build a dynamic Google API client resource from the user's token.
 
     googleapiclient resources expose API methods dynamically from discovery
     documents, so static analyzers cannot know about members like files() or
     documents(). Returning Any keeps that dynamic boundary contained here.
+
+    Results are cached per (api_name, version, token) to avoid repeated
+    discovery-document fetches (~300-800ms each).
     """
-    creds = _StaticCredentials(token=_require_oauth_token())
+    token = _require_oauth_token()
+    cache_key = (api_name, version, token)
+    cached = _service_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    creds = _StaticCredentials(token=token)
     if api_name in {"forms"}:
-        return build(api_name, version, credentials=creds, static_discovery=False)
-    return build(api_name, version, credentials=creds)
+        svc = build(api_name, version, credentials=creds, static_discovery=False)
+    else:
+        svc = build(api_name, version, credentials=creds)
+    _service_cache[cache_key] = svc
+    return svc
 
 
 def _access_token(scope_key: str = "cloud-platform") -> str:
@@ -189,6 +208,28 @@ def _move_drive_file(file_id: str, folder_id: str) -> None:
         removeParents=previous_parents,
         fields="id, parents",
     ).execute()
+
+
+def _resolve_drive_file_id(identifier: str, mime_type: str = "") -> str:
+    """Resolve a Drive-backed Google app title to an ID when possible."""
+    candidate = identifier.strip()
+    if not candidate:
+        raise ValueError("A file ID or title is required.")
+
+    query_parts = [f"name = '{_drive_query_string(candidate)}'", "trashed = false"]
+    if mime_type:
+        query_parts.append(f"mimeType = '{mime_type}'")
+
+    drive_service = _google_service("drive", "v3")
+    response = (
+        drive_service.files()
+        .list(q=" and ".join(query_parts), pageSize=2, fields="files(id, name, mimeType, webViewLink)")
+        .execute()
+    )
+    files = response.get("files", [])
+    if len(files) == 1:
+        return files[0]["id"]
+    return candidate
 
 
 def _parse_json_list(raw_json: str, default: list) -> list:
@@ -252,20 +293,25 @@ def draft_workspace_actions(recommendations_json: str) -> list[dict]:
     recommendations = json.loads(recommendations_json)
     drafts: list[WorkspaceDraft] = []
     for rec in recommendations[:3]:
+        if not isinstance(rec, dict):
+            continue
         if rec.get("verification_status") == "unsupported":
+            continue
+        name = rec.get("name") or rec.get("title") or rec.get("summary")
+        if not name:
             continue
         evidence = rec.get("evidence") or ["No supporting evidence provided."]
         drafts.append(
             WorkspaceDraft(
                 type="gmail_draft",
-                title=f"Reconnect with {rec['name']}",
+                title=f"Reconnect with {name}",
                 summary=f"Draft a warm follow-up citing: {evidence[0]}",
             )
         )
         drafts.append(
             WorkspaceDraft(
                 type="calendar_draft",
-                title=f"Follow-up meeting with {rec['name']}",
+                title=f"Follow-up meeting with {name}",
                 summary="Prepare a 30-minute reconnection invite for the ecosystem team.",
             )
         )
@@ -647,18 +693,31 @@ def create_google_form(
 
     if requests:
         forms_service.forms().batchUpdate(formId=form_id, body={"requests": requests}).execute()
+
+    # Forms API create() leaves the Drive file name as "Untitled form".
+    # Rename it via Drive so the title is visible in Drive/folder views.
+    drive_service = _google_service("drive", "v3")
+    drive_service.files().update(fileId=form_id, body={"name": title}).execute()
+
     if folder_id:
         _move_drive_file(form_id, folder_id)
 
-    return _executed_result("create_google_form", title, form_id, _workspace_url("form", form_id))
+    return _executed_result(
+        "create_google_form",
+        title,
+        form_id,
+        _workspace_url("form", form_id),
+        {"form_title": title},
+    )
 
 
 def get_google_form(form_id: str, execute: bool = False) -> dict:
-    """Read a Google Form definition, or return an approval-required plan."""
+    """Read a Google Form by ID or exact Drive title, or return an approval-required plan."""
     payload = {"form_id": form_id}
     if not execute:
         return _planned_result("get_google_form", form_id, payload)
 
+    form_id = _resolve_drive_file_id(form_id, GOOGLE_FORM_MIME_TYPE)
     forms_service = _google_service("forms", "v1")
     form = forms_service.forms().get(formId=form_id).execute()
     return {
@@ -666,6 +725,8 @@ def get_google_form(form_id: str, execute: bool = False) -> dict:
         "operation": "get_google_form",
         "requires_approval": False,
         "executed": True,
+        "resource_id": form_id,
+        "url": _workspace_url("form", form_id),
         "form": form,
     }
 
@@ -1350,17 +1411,73 @@ def delete_task(tasklist_id: str, task_id: str, execute: bool = False) -> dict:
     return _deleted_result("delete_task", task_id, task_id, permanent=True)
 
 
+def _gmail_headers(message: dict) -> dict[str, str]:
+    headers = message.get("payload", {}).get("headers", [])
+    return {header.get("name", "").lower(): header.get("value", "") for header in headers}
 
 
 def list_gmail_messages(query: str = "", max_results: int = 20, execute: bool = False) -> dict:
-    """List Gmail messages matching a query, or return an approval-required plan."""
+    """List Gmail messages matching a query, or return an approval-required plan.
+
+    Uses batch API to fetch message metadata in one round-trip instead of N+1.
+    """
     payload = {"query": query, "max_results": max_results}
     if not execute:
         return _planned_result("list_gmail_messages", "Gmail messages", payload)
 
     gmail_service = _google_service("gmail", "v1")
     response = gmail_service.users().messages().list(userId="me", q=query or None, maxResults=max_results).execute()
-    return {"status": "success", "operation": "list_gmail_messages", "requires_approval": False, "executed": True, "messages": response.get("messages", [])}
+    message_ids = response.get("messages", [])
+    if not message_ids:
+        return {
+            "status": "success",
+            "operation": "list_gmail_messages",
+            "requires_approval": False,
+            "executed": True,
+            "messages": [],
+        }
+
+    # Batch fetch all message metadata in one round-trip
+    fetched: list[dict] = []
+
+    def _on_message(request_id, resp, exception):
+        if exception is not None:
+            return
+        fetched.append(resp)
+
+    batch = gmail_service.new_batch_http_request(callback=_on_message)
+    for item in message_ids:
+        batch.add(
+            gmail_service.users().messages().get(
+                userId="me",
+                id=item["id"],
+                format="metadata",
+                metadataHeaders=["From", "Subject", "Date"],
+            )
+        )
+    batch.execute()
+
+    messages = []
+    for message in fetched:
+        headers = _gmail_headers(message)
+        messages.append(
+            {
+                "id": message.get("id", ""),
+                "thread_id": message.get("threadId", ""),
+                "title": headers.get("subject", ""),
+                "from": headers.get("from", ""),
+                "subject": headers.get("subject", ""),
+                "date": headers.get("date", ""),
+                "snippet": message.get("snippet", ""),
+            }
+        )
+    return {
+        "status": "success",
+        "operation": "list_gmail_messages",
+        "requires_approval": False,
+        "executed": True,
+        "messages": messages,
+    }
 
 
 def get_gmail_message(message_id: str, format_type: str = "metadata", execute: bool = False) -> dict:
@@ -1370,8 +1487,24 @@ def get_gmail_message(message_id: str, format_type: str = "metadata", execute: b
         return _planned_result("get_gmail_message", message_id, payload)
 
     gmail_service = _google_service("gmail", "v1")
-    message = gmail_service.users().messages().get(userId="me", id=message_id, format=format_type).execute()
-    return {"status": "success", "operation": "get_gmail_message", "requires_approval": False, "executed": True, "message": message}
+    kwargs: dict[str, Any] = {"userId": "me", "id": message_id, "format": format_type}
+    if format_type == "metadata":
+        kwargs["metadataHeaders"] = ["From", "Subject", "Date"]
+    message = gmail_service.users().messages().get(**kwargs).execute()
+    headers = _gmail_headers(message)
+    return {
+        "status": "success",
+        "operation": "get_gmail_message",
+        "requires_approval": False,
+        "executed": True,
+        "resource_id": message.get("id", message_id),
+        "title": headers.get("subject", ""),
+        "from": headers.get("from", ""),
+        "subject": headers.get("subject", ""),
+        "date": headers.get("date", ""),
+        "snippet": message.get("snippet", ""),
+        "message": message,
+    }
 
 
 def send_gmail_message(to: str, subject: str, body: str, cc: str = "", execute: bool = False) -> dict:
