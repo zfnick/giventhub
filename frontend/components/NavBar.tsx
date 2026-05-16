@@ -37,13 +37,15 @@ export function NavBar({ left, hideBorder, isFullWidth }: NavBarProps) {
         {/* Left: logo */}
         <div className="flex items-center gap-3 shrink-0">
           {left}
-          <Link href="/" className="flex items-center gap-2">
-            <div className="h-8 w-8 bg-zinc-900 rounded-lg flex items-center justify-center shadow-sm transform -rotate-6">
-              <span className="text-sm font-bold text-white tracking-tighter">g.</span>
-            </div>
-            <span className="font-bold text-base tracking-tight text-zinc-900 hidden sm:block">
-              gieventhub
-            </span>
+          <Link href="/" className="flex items-center">
+            <Image
+              src="/logo.png"
+              alt="gieventhub logo"
+              width={56}
+              height={56}
+              className="object-contain"
+              priority
+            />
           </Link>
         </div>
 

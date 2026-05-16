@@ -83,7 +83,7 @@ export default function ImportEventPage() {
           </Button>
         </form>
 
-        <div className="flex justify-center pt-2">
+        <div className="flex justify-center -mt-4">
           <button
             onClick={() => router.push("/")}
             className="text-sm text-zinc-400 hover:text-zinc-600 underline underline-offset-4 decoration-zinc-300 hover:decoration-zinc-500 transition-colors"

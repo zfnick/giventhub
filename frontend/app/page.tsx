@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { Sparkles, Users, Calendar, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { EventTypeModal } from "@/components/EventTypeModal";
 import {
   Card,
   CardContent,
@@ -106,12 +107,12 @@ export default function ExplorePage() {
           </p>
 
           <div className="flex flex-col sm:flex-row items-center gap-4">
-            <Link href={user ? "/onboarding/import" : "/onboarding/login"}>
+            <EventTypeModal>
               <Button className="gap-2 h-11 px-7 bg-black hover:bg-zinc-800 text-white text-sm font-semibold shadow-lg">
                 <Sparkles className="h-4 w-4" />
-                Import Past Event via AI
+                Import a Playbook
               </Button>
-            </Link>
+            </EventTypeModal>
             <Link href={user ? "/chat" : "/onboarding/login"}>
               <Button variant="outline" className="gap-2 h-11 px-7 bg-white hover:bg-zinc-50 text-zinc-900 border-zinc-200 text-sm font-semibold shadow-sm">
                 <MessageSquare className="h-4 w-4" />

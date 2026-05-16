@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, Clock, Files, CheckCircle2 } from "lucide-react";
+import { Sparkles, Clock, Files, CheckCircle2, CalendarCheck, CalendarClock } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -196,6 +196,7 @@ function ScanWorkspaceContent() {
   const [scanState, setScanState] = useState<"scanning" | "found">("scanning");
   const [phaseIndex, setPhaseIndex] = useState(0);
   const [progress, setProgress] = useState(0);
+  const [eventTiming, setEventTiming] = useState<"past" | "upcoming" | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
   const eventName = searchParams.get("name") || "Stanford AI Demo Day 2026";
@@ -271,7 +272,7 @@ function ScanWorkspaceContent() {
   const currentSkeleton = phase.skeleton;
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center w-full max-w-lg px-6 py-12">
+    <div className={`flex-1 flex flex-col items-center justify-center w-full px-6 py-8 ${scanState === "scanning" ? "max-w-lg" : "max-w-5xl"}`}>
       {scanState === "scanning" ? (
         <div className="w-full space-y-8">
 
@@ -327,20 +328,19 @@ function ScanWorkspaceContent() {
 
       ) : (
         /* ── FOUND STATE ── */
-        <div className="w-full animate-in fade-in zoom-in-95 duration-500 space-y-6">
+        <div className="w-full animate-in fade-in zoom-in-95 duration-500 grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
 
-          {/* Header */}
-          <div className="text-center space-y-2">
-            <h2 className="text-2xl font-bold tracking-tight text-zinc-900">Event Detected</h2>
-            <p className="text-zinc-500 text-sm">
-              AI found a cluster of documents that look like a recently planned event.
-            </p>
-          </div>
-
-          {/* Event card */}
-          <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+          {/* ── LEFT PANEL ── */}
+          <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm flex flex-col overflow-hidden">
             <div className="px-6 py-5 border-b border-zinc-100 bg-gradient-to-r from-zinc-100/60 to-white">
-              <div className="flex items-center justify-between mb-3">
+              <h2 className="text-xl font-bold tracking-tight text-zinc-900">Event Detected</h2>
+              <p className="text-zinc-500 text-sm mt-1">
+                AI found a cluster of documents that look like a recently planned event.
+              </p>
+            </div>
+
+            <div className="px-6 py-4 border-b border-zinc-100">
+              <div className="flex items-center justify-between mb-2">
                 <Badge className="bg-zinc-100 text-zinc-900 hover:bg-zinc-200 font-medium text-xs px-2.5 py-0.5">
                   Hackathon
                 </Badge>
@@ -349,14 +349,83 @@ function ScanWorkspaceContent() {
                   Last active: 2 days ago
                 </span>
               </div>
-              <h3 className="text-xl font-bold text-zinc-900">{eventName}</h3>
-              <p className="text-sm text-zinc-500 mt-0.5 flex items-center gap-1.5">
-                <Files className="h-3.5 w-3.5" />
+              <h3 className="text-lg font-bold text-zinc-900">{eventName}</h3>
+              <p className="text-xs text-zinc-500 mt-0.5 flex items-center gap-1.5">
+                <Files className="h-3 w-3" />
                 4 related files found in a shared Google Drive folder
               </p>
             </div>
 
-            <div className="px-6 py-4 space-y-2">
+            <div className="px-6 py-5 space-y-4 flex-1 flex flex-col">
+              <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Is this a past or upcoming event?</p>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setEventTiming("past")}
+                  className={`flex flex-col items-start gap-2 p-3 rounded-xl border-2 text-left transition-all ${eventTiming === "past" ? "border-zinc-900 bg-white shadow-sm" : "border-zinc-200 bg-zinc-50 hover:border-zinc-300"}`}
+                >
+                  <div className={`p-1.5 rounded-lg ${eventTiming === "past" ? "bg-zinc-900 text-white" : "bg-zinc-200 text-zinc-500"}`}>
+                    <CalendarCheck className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-zinc-900">Past event</p>
+                    <p className="text-xs text-zinc-500 mt-0.5 leading-relaxed">Document what happened so others can replicate it.</p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => setEventTiming("upcoming")}
+                  className={`flex flex-col items-start gap-2 p-3 rounded-xl border-2 text-left transition-all ${eventTiming === "upcoming" ? "border-zinc-900 bg-white shadow-sm" : "border-zinc-200 bg-zinc-50 hover:border-zinc-300"}`}
+                >
+                  <div className={`p-1.5 rounded-lg ${eventTiming === "upcoming" ? "bg-zinc-900 text-white" : "bg-zinc-200 text-zinc-500"}`}>
+                    <CalendarClock className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-zinc-900">Upcoming event</p>
+                    <p className="text-xs text-zinc-500 mt-0.5 leading-relaxed">AI will help you prepare forms, schedules, and comms.</p>
+                  </div>
+                </button>
+              </div>
+
+              {eventTiming && (
+                <div className="rounded-xl bg-zinc-50 border border-zinc-200 px-4 py-3 text-xs text-zinc-600 leading-relaxed animate-in fade-in duration-200">
+                  {eventTiming === "past"
+                    ? "We'll extract what happened — participants, outcomes, assets — and turn it into a reusable playbook."
+                    : "We'll scaffold what you need — registration forms, schedules, and communications — ready to launch."}
+                </div>
+              )}
+
+              <div className="mt-auto space-y-2 pt-2">
+                <Button
+                  onClick={() => router.push(`/onboarding/review?timing=${eventTiming}`)}
+                  disabled={!eventTiming}
+                  className="w-full h-11 bg-black hover:bg-zinc-800 text-white gap-2 text-sm font-semibold rounded-xl shadow-sm shadow-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  {eventTiming === "upcoming" ? "Plan this event" : "Build playbook"}
+                </Button>
+
+                <button
+                  onClick={() => router.push("/")}
+                  className="w-full text-xs text-zinc-400 hover:text-zinc-600 underline underline-offset-4 decoration-zinc-300 transition-colors py-1"
+                >
+                  Go back to explore
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* ── RIGHT PANEL — FILES ── */}
+          <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm flex flex-col overflow-hidden">
+            <div className="px-6 py-5 border-b border-zinc-100 bg-gradient-to-r from-zinc-100/60 to-white">
+              <div className="flex items-center gap-2">
+                <Files className="h-4 w-4 text-zinc-500" />
+                <h3 className="text-sm font-semibold text-zinc-900 uppercase tracking-wider">Found Files</h3>
+              </div>
+              <p className="text-xs text-zinc-500 mt-1">Documents pulled from your shared Drive folder.</p>
+            </div>
+
+            <div className="px-5 py-4 space-y-2 flex-1">
               {FILES.map(({ name, type, size }) => {
                 const cfg = FILE_TYPE_CONFIG[type];
                 return (
@@ -377,25 +446,6 @@ function ScanWorkspaceContent() {
                   </div>
                 );
               })}
-            </div>
-
-            <div className="px-6 py-5 border-t border-zinc-100 bg-zinc-50/50 space-y-3">
-              <p className="text-sm font-semibold text-zinc-700 text-center">
-                Did this event happen recently?
-              </p>
-              <Button
-                onClick={() => router.push("/onboarding/review")}
-                className="w-full h-11 bg-black hover:bg-zinc-800 text-white gap-2 text-sm font-semibold rounded-xl shadow-sm shadow-zinc-200"
-              >
-                <Sparkles className="h-4 w-4" />
-                Continue
-              </Button>
-              <button
-                onClick={() => router.push("/")}
-                className="w-full text-xs font-mono text-zinc-400 hover:text-zinc-600 underline underline-offset-4 decoration-zinc-300 hover:decoration-zinc-500 transition-colors py-1"
-              >
-                No, go back to explore
-              </button>
             </div>
           </div>
         </div>

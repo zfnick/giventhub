@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { NavBar } from "@/components/NavBar";
+import { EventTypeModal } from "@/components/EventTypeModal";
 import { useAuth } from "@/lib/AuthContext";
 
 // Mock: in production this would be fetched from Firestore by user ID
@@ -66,12 +67,12 @@ export default function MyPlaybooksPage() {
               Event architectures you&apos;ve created or imported via AI.
             </p>
           </div>
-          <Link href="/onboarding/scan">
+          <EventTypeModal>
             <Button className="gap-2 bg-zinc-900 hover:bg-zinc-700 text-white h-10 px-5 text-sm">
               <Plus className="h-4 w-4" />
               Import New Event
             </Button>
-          </Link>
+          </EventTypeModal>
         </div>
 
         {myPlaybooks.length === 0 ? (
@@ -86,12 +87,12 @@ export default function MyPlaybooksPage() {
                 Import a past event from your Google Workspace and we&apos;ll generate a reusable playbook for you.
               </p>
             </div>
-            <Link href="/onboarding/scan">
+            <EventTypeModal>
               <Button className="gap-2 bg-zinc-900 hover:bg-zinc-700 text-white">
                 <Plus className="h-4 w-4" />
                 Import your first event
               </Button>
-            </Link>
+            </EventTypeModal>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -144,14 +145,14 @@ export default function MyPlaybooksPage() {
             ))}
 
             {/* Add new card */}
-            <Link href="/onboarding/scan">
-              <div className="border-2 border-dashed border-zinc-200 rounded-xl h-full min-h-[240px] flex flex-col items-center justify-center gap-3 text-zinc-400 hover:border-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer">
+            <EventTypeModal>
+              <button className="border-2 border-dashed border-zinc-200 rounded-xl h-full min-h-[240px] w-full flex flex-col items-center justify-center gap-3 text-zinc-400 hover:border-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer">
                 <div className="h-10 w-10 rounded-xl border-2 border-dashed border-current flex items-center justify-center">
                   <Plus className="h-5 w-5" />
                 </div>
                 <span className="text-sm font-medium">Import New Event</span>
-              </div>
-            </Link>
+              </button>
+            </EventTypeModal>
           </div>
         )}
       </main>

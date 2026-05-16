@@ -218,7 +218,7 @@ export default function ChatPage() {
     <div className="min-h-screen bg-zinc-50 flex flex-col">
       <NavBar />
 
-      <div className="flex flex-1 overflow-hidden" style={{ height: "calc(100vh - 64px)" }}>
+      <div className="container mx-auto px-6 flex flex-1 overflow-hidden" style={{ height: "calc(100vh - 64px)" }}>
         {/* ── Chat panel ───────────────────────────────────────────────── */}
         <div className="w-full lg:w-[420px] flex flex-col border-r bg-white shrink-0">
           {/* Header */}

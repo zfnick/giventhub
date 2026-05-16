@@ -157,15 +157,13 @@ export default function PlaybookPage({ params }: { params: { id: string } }) {
 
   return (
     <div className="min-h-screen bg-zinc-50/50">
-      <NavBar
-        left={
-          <Link href="/" className="text-zinc-500 hover:text-zinc-900 transition-colors">
-            <ArrowLeft className="h-5 w-5" />
-          </Link>
-        }
-      />
+      <NavBar />
 
       <main className="container mx-auto px-6 py-12 max-w-6xl">
+        <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-900 transition-colors mb-8">
+          <ArrowLeft className="h-4 w-4" />
+          Back
+        </Link>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
           
           {/* Left Column: Details */}

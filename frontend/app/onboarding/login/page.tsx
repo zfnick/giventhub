@@ -32,8 +32,14 @@ export default function LoginPage() {
 
       <div className="relative z-10 w-full max-w-md p-8 bg-white/70 backdrop-blur-xl rounded-3xl border border-zinc-200 shadow-xl">
         <div className="flex justify-center mb-8">
-          <div className="h-16 w-16 bg-zinc-900 rounded-2xl flex items-center justify-center shadow-lg transform -rotate-6">
-            <span className="text-3xl font-bold text-white tracking-tighter">g.</span>
+          <div className="relative h-20 w-20 transform -rotate-6">
+            <Image
+              src="/logo.png"
+              alt="gieventhub logo"
+              fill
+              className="object-contain"
+              priority
+            />
           </div>
         </div>
 

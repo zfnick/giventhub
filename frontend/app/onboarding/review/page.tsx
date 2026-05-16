@@ -1,14 +1,12 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
+import { useState, useRef, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PlaybookFlowClient as PlaybookFlow } from "@/components/graph/PlaybookFlowClient";
-import { NavBar } from "@/components/NavBar";
 import {
   Globe,
   Lock,
@@ -18,9 +16,10 @@ import {
   Bot,
   User,
   Upload,
-  Link as LinkIcon,
   Paperclip,
-  ChevronDown,
+  CalendarCheck,
+  CalendarClock,
+  ArrowLeft,
 } from "lucide-react";
 
 type Message = { role: "ai" | "user"; text: string };
@@ -32,8 +31,10 @@ const INITIAL_MESSAGES: Message[] = [
   },
 ];
 
-export default function ReviewPlaybookPage() {
+function ReviewPlaybookContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const timing = (searchParams.get("timing") ?? "past") as "past" | "upcoming";
   const [isPublic, setIsPublic] = useState(true);
   const [isPushing, setIsPushing] = useState(false);
   const [description, setDescription] = useState(
@@ -53,12 +54,6 @@ export default function ReviewPlaybookPage() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
-
-  const addTag = () => {
-    const trimmed = tagInput.trim();
-    if (trimmed && !tags.includes(trimmed)) setTags([...tags, trimmed]);
-    setTagInput("");
-  };
 
   const sendMessage = (overrideText?: string) => {
     const text = (overrideText ?? chatInput).trim();
@@ -80,6 +75,16 @@ export default function ReviewPlaybookPage() {
     sendMessage(`I've uploaded a file: ${file.name}`);
   };
 
+  const handleBack = () => {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
+      return;
+    }
+    router.push(timing === "upcoming" ? "/event/new" : "/onboarding/scan");
+  };
+
+  const backLabel = timing === "upcoming" ? "Back to planning" : "Back to import";
+
   const handlePublish = async () => {
     setIsPushing(true);
     try {
@@ -100,275 +105,295 @@ export default function ReviewPlaybookPage() {
     } catch {
       setTimeout(() => router.push("/playbooks/stanford-demo-day-2026"), 1500);
     }
-  };  return (
-    <div className="h-screen flex flex-col bg-white text-zinc-900 overflow-hidden">
-      <NavBar hideBorder />
-
-      <main className="container mx-auto flex-1 flex overflow-hidden">
-        {/* Left Panel: Configuration & Editor */}
-        <div className="flex-1 overflow-y-auto border-r border-zinc-100 pl-6 pr-12">
-          <div className="py-8 space-y-10">
-            {/* Page header */}
-            <div className="bg-white">
-              <h1 className="text-3xl font-bold tracking-tight">Save a new Playbook</h1>
-            </div>
-
-            {/* ── Section 1: General ── */}
-            <section className="space-y-6">
-              <div className="flex items-center gap-3">
-                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-zinc-900 text-white flex items-center justify-center text-sm font-bold">
-                  1
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold">General</h2>
-                  <p className="text-sm text-zinc-500">Name your playbook and give it a short summary.</p>
-                </div>
-              </div>
-
-              <div className="space-y-6 pl-11">
-                <div className="space-y-1.5">
-                  <Label htmlFor="title" className="text-sm font-semibold">
-                    Playbook Name <span className="text-red-400">*</span>
-                  </Label>
-                  <Input
-                    id="title"
-                    defaultValue="Stanford AI Demo Day 2026"
-                    className="h-11 font-medium bg-zinc-50 border-zinc-200 focus-visible:ring-zinc-900 rounded-xl"
-                    placeholder="e.g. Stanford AI Demo Day 2026"
-                  />
-                  <p className="text-xs text-zinc-400">Great playbook names are short and memorable.</p>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="description" className="text-sm font-semibold">Description</Label>
-                  <Textarea
-                    id="description"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value.slice(0, 350))}
-                    className="min-h-[120px] leading-relaxed resize-none bg-zinc-50 border-zinc-200 focus-visible:ring-zinc-900 rounded-xl p-3"
-                    placeholder="What was this event about?"
-                  />
-                  <p className="text-xs text-zinc-400 font-mono">{description.length} / 350</p>
-                </div>
-
-                {/* Tags */}
-                <div className="space-y-3">
-                  <Label className="text-sm font-semibold">Tags</Label>
-                  <div className="flex flex-wrap gap-2">
-                    {tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="inline-flex items-center gap-1.5 px-3 py-1 bg-zinc-100 border border-zinc-200 text-zinc-700 rounded-lg text-xs font-semibold"
-                      >
-                        {tag}
-                        <button onClick={() => setTags(tags.filter((t) => t !== tag))} className="hover:text-zinc-900 transition-colors">
-                          <X className="h-3 w-3" />
-                        </button>
-                      </span>
-                    ))}
-                    <div className="flex gap-1.5 items-center bg-zinc-50 border border-dashed border-zinc-300 rounded-lg px-2.5 py-1">
-                      <input
-                        value={tagInput}
-                        onChange={(e) => setTagInput(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && addTag()}
-                        placeholder="Add tag..."
-                        className="text-xs outline-none bg-transparent w-20"
-                      />
-                      <button onClick={addTag} className="text-zinc-400 hover:text-zinc-700">
-                        <Plus className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
+  };
+  return (
+    <div className="h-screen flex flex-col bg-white">
+      <main className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        <div className="container mx-auto px-6 flex flex-1 min-h-0 overflow-hidden">
+          {/* Left Panel: Configuration & Editor */}
+          <div className="flex-1 overflow-y-auto border-r border-zinc-100 pr-12">
+            <div className="py-8 space-y-10">
+              {/* Page header */}
+              <div className="bg-white space-y-2">
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  className="inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-900 transition-colors mb-2"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  {backLabel}
+                </button>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-2 min-w-0">
+                    <h1 className="text-3xl font-bold tracking-tight">Save a new Playbook</h1>
+                    <p className="text-sm text-zinc-500">
+                      {timing === "past"
+                        ? "We've extracted what happened — review and publish so others can replicate it."
+                        : "We've scaffolded what you need — review the plan and publish to start running it."}
+                    </p>
+                  </div>
+                  <div className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-zinc-200 bg-zinc-50">
+                    {timing === "past"
+                      ? <CalendarCheck className="h-4 w-4 text-zinc-500" />
+                      : <CalendarClock className="h-4 w-4 text-zinc-500" />}
+                    <span className="text-xs font-semibold uppercase tracking-wider text-zinc-600">
+                      {timing === "past" ? "Past event" : "Upcoming event"}
+                    </span>
                   </div>
                 </div>
               </div>
-            </section>
 
-            {/* ── Section 2: Knowledge Map ── */}
-            <section className="space-y-6">
-              <div className="flex items-center gap-3">
-                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-zinc-900 text-white flex items-center justify-center text-sm font-bold">
-                  2
+              {/* ── Section 1: General ── */}
+              <section className="space-y-6">
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-zinc-900 text-white flex items-center justify-center text-sm font-bold">
+                    1
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold">General</h2>
+                    <p className="text-sm text-zinc-500">Name your playbook and give it a short summary.</p>
+                  </div>
                 </div>
-                <div>
-                  <h2 className="text-lg font-bold">Event Knowledge Map</h2>
-                  <p className="text-sm text-zinc-500">
-                    Relationships found in your Google Workspace files.
-                  </p>
-                </div>
-              </div>
-              <div className="pl-11">
-                <div className="h-[400px] rounded-2xl border border-zinc-200 overflow-hidden bg-zinc-50 shadow-inner">
-                  <PlaybookFlow />
-                </div>
-              </div>
-            </section>
 
-            {/* ── Section 4: Configuration ── */}
-            <section className="space-y-6">
-              <div className="flex items-center gap-3">
-                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-zinc-900 text-white flex items-center justify-center text-sm font-bold">
-                  3
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold">Configuration</h2>
-                  <p className="text-sm text-zinc-500">Control access and distribution.</p>
-                </div>
-              </div>
-
-              <div className="pl-11 space-y-4">
-                <div className="rounded-2xl border border-zinc-200 divide-y divide-zinc-100 overflow-hidden bg-white shadow-sm">
-                  <div className="flex items-center justify-between px-5 py-5">
-                    <div>
-                      <p className="text-sm font-bold">Visibility <span className="text-red-400">*</span></p>
-                      <p className="text-xs text-zinc-500 mt-0.5">Who can view and adapt this playbook.</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setIsPublic(true)}
-                        className={`flex items-center gap-1.5 px-4 py-2 rounded-xl border text-xs font-bold transition-all ${isPublic ? "bg-black text-white border-black shadow-md" : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-300"}`}
-                      >
-                        <Globe className="h-3.5 w-3.5" /> Public
-                      </button>
-                      <button
-                        onClick={() => setIsPublic(false)}
-                        className={`flex items-center gap-1.5 px-4 py-2 rounded-xl border text-xs font-bold transition-all ${!isPublic ? "bg-black text-white border-black shadow-md" : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-300"}`}
-                      >
-                        <Lock className="h-3.5 w-3.5" /> Private
-                      </button>
-                    </div>
+                <div className="space-y-6 pl-11">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="title" className="text-sm font-semibold">
+                      Playbook Name <span className="text-red-400">*</span>
+                    </Label>
+                    <Input
+                      id="title"
+                      defaultValue="Stanford AI Demo Day 2026"
+                      className="h-11 font-medium bg-zinc-50 border-zinc-200 focus-visible:ring-zinc-900 rounded-xl"
+                      placeholder="e.g. Stanford AI Demo Day 2026"
+                    />
+                    <p className="text-xs text-zinc-400">Great playbook names are short and memorable.</p>
                   </div>
 
-                  <div className="flex items-center justify-between px-5 py-5">
-                    <div>
-                      <p className="text-sm font-bold">Allow Adapting</p>
-                      <p className="text-xs text-zinc-500 mt-0.5">Others can clone and customize your work.</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" defaultChecked className="sr-only peer" />
-                      <div className="w-11 h-6 bg-zinc-200 rounded-full peer peer-checked:bg-black after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full peer-checked:after:border-white" />
-                    </label>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="description" className="text-sm font-semibold">Description</Label>
+                    <Textarea
+                      id="description"
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value.slice(0, 350))}
+                      className="min-h-[120px] leading-relaxed resize-none bg-zinc-50 border-zinc-200 focus-visible:ring-zinc-900 rounded-xl p-3"
+                      placeholder="What was this event about?"
+                    />
+                    <p className="text-xs text-zinc-400 font-mono">{description.length} / 350</p>
                   </div>
 
-                  <div className="flex items-center justify-between px-5 py-5">
-                    <div>
-                      <p className="text-sm font-bold">Usage Licence</p>
-                      <p className="text-xs text-zinc-500 mt-0.5">Permissions for re-use.</p>
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-semibold">Topics</Label>
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {tags.map((tag) => (
+                        <span key={tag} className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-zinc-100 text-zinc-700 text-xs font-bold border border-zinc-200">
+                          {tag}
+                          <button onClick={() => setTags(tags.filter(t => t !== tag))} className="hover:text-red-500">
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
                     </div>
                     <div className="relative">
-                      <select className="appearance-none text-xs font-bold border border-zinc-200 rounded-xl px-4 py-2 pr-10 bg-zinc-50 text-zinc-900 cursor-pointer focus:outline-none focus:ring-2 focus:ring-zinc-900 transition-all">
-                        <option>Open for anyone</option>
-                        <option>Credit required</option>
-                        <option>No reuse</option>
-                      </select>
-                      <ChevronDown className="absolute right-3 top-2.5 h-4 w-4 text-zinc-400 pointer-events-none" />
+                      <Input
+                        value={tagInput}
+                        onChange={(e) => setTagInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && tagInput.trim()) {
+                            setTags([...tags, tagInput.trim()]);
+                            setTagInput("");
+                          }
+                        }}
+                        className="h-10 bg-zinc-50 border-zinc-200 focus-visible:ring-zinc-900 rounded-xl"
+                        placeholder="Add topics (e.g. Hackathon, AI)..."
+                      />
+                      <Plus className="absolute right-3 top-3 h-4 w-4 text-zinc-400" />
                     </div>
                   </div>
                 </div>
+              </section>
 
-                <div className="flex items-center justify-between pt-6 pb-12">
-                  <p className="text-sm text-zinc-400">
-                    You can edit everything after publishing.
+              {/* ── Section 2: Structure ── */}
+              <section className="space-y-6">
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-zinc-900 text-white flex items-center justify-center text-sm font-bold">
+                    2
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold">Knowledge Map</h2>
+                    <p className="text-sm text-zinc-500">Review the assets and relationships I&apos;ve extracted.</p>
+                  </div>
+                </div>
+
+                <div className="pl-11">
+                  <div className="h-[600px] w-full border border-zinc-200 rounded-2xl overflow-hidden bg-zinc-50 shadow-inner">
+                    <PlaybookFlow />
+                  </div>
+                  <p className="text-[11px] text-zinc-400 mt-3 flex items-center gap-1.5 px-1">
+                    <Bot className="h-3 w-3" />
+                    Interactive map generated from your source files. Drag to explore.
                   </p>
-                  <Button
-                    onClick={handlePublish}
-                    disabled={isPushing}
-                    className="h-12 bg-black hover:bg-zinc-800 text-white font-bold gap-2 px-8 rounded-xl shadow-xl shadow-zinc-200 transition-all active:scale-95"
-                  >
-                    {isPushing ? (
-                      <>
-                        <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                        Saving...
-                      </>
-                    ) : (
-                      <>
-                        <Upload className="h-4 w-4" />
-                        Save Playbook
-                      </>
-                    )}
-                  </Button>
                 </div>
-              </div>
-            </section>
-          </div>
-        </div>
+              </section>
 
-        {/* Right Panel: AI Chat */}
-        <div className="w-[420px] flex flex-col pl-12 pr-6 bg-white">
-          <div className="py-8 space-y-6">
-            <h2 className="text-lg font-bold flex items-center gap-2">
-              <Bot className="h-5 w-5 text-zinc-900" />
-              Anything I missed?
-            </h2>
-            <p className="text-sm text-zinc-500 mt-1 leading-relaxed">
-              Describe what&apos;s missing or paste a Google Drive link, and I&apos;ll update the playbook.
-            </p>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-zinc-50/50 rounded-2xl mb-4 border border-zinc-100">
-            {messages.map((msg, i) => (
-              <div key={i} className={`flex gap-3 items-start ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
-                <div className={`flex-shrink-0 h-8 w-8 rounded-xl flex items-center justify-center text-white shadow-sm ${msg.role === "ai" ? "bg-black" : "bg-zinc-500"}`}>
-                  {msg.role === "ai" ? <Bot className="h-4 w-4" /> : <User className="h-4 w-4" />}
+              {/* ── Section 3: Visibility & Rights ── */}
+              <section className="space-y-6 pb-12">
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-zinc-900 text-white flex items-center justify-center text-sm font-bold">
+                    3
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold">Visibility & Permissions</h2>
+                    <p className="text-sm text-zinc-500">Decide who can see and adapt this playbook.</p>
+                  </div>
                 </div>
-                <div className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm ${msg.role === "ai" ? "bg-white border border-zinc-100 text-zinc-700" : "bg-zinc-900 text-white"}`}>
-                  {msg.text}
-                </div>
-              </div>
-            ))}
-            <div ref={chatEndRef} />
-          </div>
 
-          {/* Chat Input */}
-          <div className="pb-6 bg-white">
-            <div className="relative group">
-              <Textarea
-                placeholder="Talk to AI..."
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
-                  }
-                }}
-                className="min-h-[100px] w-full bg-zinc-50 border-zinc-200 focus-visible:ring-zinc-900 rounded-2xl p-4 pr-12 text-sm leading-relaxed resize-none transition-all group-hover:border-zinc-300"
-              />
-              <div className="absolute bottom-3 right-3 flex gap-2">
-                <button
-                  title="Upload a file"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="h-8 w-8 flex items-center justify-center rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-500 transition-colors shadow-sm"
-                >
-                  <Paperclip className="h-4 w-4" />
-                </button>
-                <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} />
-                <Button
-                  onClick={() => sendMessage()}
-                  disabled={!chatInput.trim()}
-                  size="sm"
-                  className="h-8 w-8 p-0 bg-black hover:bg-zinc-800 text-white rounded-lg shadow-md"
-                >
-                  <Send className="h-4 w-4" />
-                </Button>
-              </div>
+                <div className="pl-11 space-y-6">
+                  <div className="space-y-3">
+                    <button
+                      onClick={() => setIsPublic(true)}
+                      className={`w-full flex items-center gap-4 px-5 py-4 rounded-xl border-2 text-left transition-all ${isPublic ? "border-zinc-900 bg-white shadow-sm" : "border-zinc-200 bg-white hover:border-zinc-300"}`}
+                    >
+                      <div className={`p-2 rounded-lg shrink-0 ${isPublic ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-500"}`}>
+                        <Globe className="h-5 w-5" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-bold text-zinc-900">Public</p>
+                        <p className="text-xs text-zinc-500 mt-0.5">Anyone on the internet can see this playbook.</p>
+                      </div>
+                      <div className={`h-4 w-4 rounded-full border-2 shrink-0 flex items-center justify-center ${isPublic ? "border-zinc-900" : "border-zinc-300"}`}>
+                        {isPublic && <div className="h-2 w-2 rounded-full bg-zinc-900" />}
+                      </div>
+                    </button>
+
+                    <button
+                      onClick={() => setIsPublic(false)}
+                      className={`w-full flex items-center gap-4 px-5 py-4 rounded-xl border-2 text-left transition-all ${!isPublic ? "border-zinc-900 bg-white shadow-sm" : "border-zinc-200 bg-white hover:border-zinc-300"}`}
+                    >
+                      <div className={`p-2 rounded-lg shrink-0 ${!isPublic ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-500"}`}>
+                        <Lock className="h-5 w-5" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-bold text-zinc-900">Private</p>
+                        <p className="text-xs text-zinc-500 mt-0.5">You choose who can see and adapt this playbook.</p>
+                      </div>
+                      <div className={`h-4 w-4 rounded-full border-2 shrink-0 flex items-center justify-center ${!isPublic ? "border-zinc-900" : "border-zinc-300"}`}>
+                        {!isPublic && <div className="h-2 w-2 rounded-full bg-zinc-900" />}
+                      </div>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-end pt-6 pb-12">
+                    <Button
+                      onClick={handlePublish}
+                      disabled={isPushing}
+                      className="h-12 bg-black hover:bg-zinc-800 text-white font-bold gap-2 px-8 rounded-xl shadow-xl shadow-zinc-200 transition-all active:scale-95"
+                    >
+                      {isPushing ? (
+                        <>
+                          <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="h-4 w-4" />
+                          Save Playbook
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </section>
             </div>
-            <div className="mt-3 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-              <button 
-                onClick={() => sendMessage("What sponsors are missing?")}
-                className="whitespace-nowrap px-3 py-1.5 rounded-full border border-zinc-200 bg-zinc-50 text-[11px] font-bold text-zinc-600 hover:bg-zinc-100 hover:border-zinc-300 transition-all shadow-sm"
-              >
-                Find sponsors
-              </button>
-              <button 
-                onClick={() => sendMessage("Generate a judging rubric")}
-                className="whitespace-nowrap px-3 py-1.5 rounded-full border border-zinc-200 bg-zinc-50 text-[11px] font-bold text-zinc-600 hover:bg-zinc-100 hover:border-zinc-300 transition-all shadow-sm"
-              >
-                Create rubric
-              </button>
+          </div>
+
+          {/* Right Panel: AI Chat — fixed height, does not scroll at panel level */}
+          <div className="w-[420px] flex flex-col pl-12 bg-white overflow-hidden">
+            <div className="py-8 space-y-4 flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="shrink-0">
+                <h2 className="text-lg font-bold flex items-center gap-2">
+                  <Bot className="h-5 w-5 text-zinc-900" />
+                  Anything I missed?
+                </h2>
+                <p className="text-sm text-zinc-500 mt-1 leading-relaxed">
+                  Describe what&apos;s missing or paste a Google Drive link, and I&apos;ll update the playbook.
+                </p>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-zinc-50/50 rounded-2xl mb-4 border border-zinc-100">
+                {messages.map((msg, i) => (
+                  <div key={i} className={`flex gap-3 items-start ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
+                    <div className={`flex-shrink-0 h-8 w-8 rounded-xl flex items-center justify-center text-white shadow-sm ${msg.role === "ai" ? "bg-black" : "bg-zinc-500"}`}>
+                      {msg.role === "ai" ? <Bot className="h-4 w-4" /> : <User className="h-4 w-4" />}
+                    </div>
+                    <div className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm ${msg.role === "ai" ? "bg-white border border-zinc-100 text-zinc-700" : "bg-zinc-900 text-white"}`}>
+                      {msg.text}
+                    </div>
+                  </div>
+                ))}
+                <div ref={chatEndRef} />
+              </div>
+
+              {/* Chat Input */}
+              <div className="shrink-0 pb-6 bg-white">
+                <div className="relative group">
+                  <Textarea
+                    placeholder="Talk to AI..."
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        sendMessage();
+                      }
+                    }}
+                    className="min-h-[100px] w-full bg-zinc-50 border-zinc-200 focus-visible:ring-zinc-900 rounded-2xl p-4 pr-12 text-sm leading-relaxed resize-none transition-all group-hover:border-zinc-300"
+                  />
+                  <div className="absolute bottom-3 right-3 flex gap-2">
+                    <button
+                      title="Upload a file"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="h-8 w-8 flex items-center justify-center rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-500 transition-colors shadow-sm"
+                    >
+                      <Paperclip className="h-4 w-4" />
+                    </button>
+                    <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} />
+                    <Button
+                      onClick={() => sendMessage()}
+                      disabled={!chatInput.trim()}
+                      size="sm"
+                      className="h-8 w-8 p-0 bg-black hover:bg-zinc-800 text-white rounded-lg shadow-md"
+                    >
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+                <div className="mt-3 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+                  <button
+                    onClick={() => sendMessage("What sponsors are missing?")}
+                    className="whitespace-nowrap px-3 py-1.5 rounded-full border border-zinc-200 bg-zinc-50 text-[11px] font-bold text-zinc-600 hover:bg-zinc-100 hover:border-zinc-300 transition-all shadow-sm"
+                  >
+                    Find sponsors
+                  </button>
+                  <button
+                    onClick={() => sendMessage("Generate a judging rubric")}
+                    className="whitespace-nowrap px-3 py-1.5 rounded-full border border-zinc-200 bg-zinc-50 text-[11px] font-bold text-zinc-600 hover:bg-zinc-100 hover:border-zinc-300 transition-all shadow-sm"
+                  >
+                    Create rubric
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </main>
     </div>
+  );
+}
+
+export default function ReviewPlaybookPage() {
+  return (
+    <Suspense fallback={<div className="h-screen flex items-center justify-center"><div className="h-8 w-8 rounded-full border-4 border-zinc-200 border-t-zinc-900 animate-spin" /></div>}>
+      <ReviewPlaybookContent />
+    </Suspense>
   );
 }
