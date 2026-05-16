@@ -2,26 +2,37 @@
 
 ## Remote Branch Name
 
-`feature/ai-service-adk-v1`
+Intermediate branch: `feature/ai-service-adk-v1`
 
-## Commit Message
+Feature branches:
 
-`feat(ai-service): add ADK orchestrator prototype`
+- `feature/ai-service-adk-core`
+- `feature/ai-service-workspace-tools`
 
-## PR Title
+## PR Restructuring
 
-`Add ADK AI service prototype`
+This change is larger than 300 LOC, so split it into two PRs that both merge
+into `feature/ai-service-adk-v1`. After both feature PRs land, open one final
+small merge PR from `feature/ai-service-adk-v1` into `main`.
 
-## PR Description
+## PR 1: ADK Core
 
-Adds the first Google ADK prototype for GITEventHub. The service uses a central orchestrator, stateless role agents, local sample ecosystem data, and mocked tools for relationship search, ranking, verification, and Workspace draft planning.
+Commit Message:
 
-The implementation is intentionally mock-data driven so the AI workflow can be validated before wiring Firestore, Google OAuth, or Google Workspace APIs.
+`feat(ai-service): add ADK orchestrator core`
 
-## Files To Upload
+PR Title:
 
-- `ai-service/.env.example`
-- `ai-service/.gitignore`
+`Add ADK orchestrator core`
+
+PR Description:
+
+Adds the central GITEventHub ADK orchestrator, stateless role agents, local
+relationship demo data, intake parsing, relationship search, ranking,
+verification, and safe Workspace draft planning.
+
+Files To Upload:
+
 - `ai-service/README.md`
 - `ai-service/requirements.txt`
 - `ai-service/git_eventhub_agent/__init__.py`
@@ -29,4 +40,29 @@ The implementation is intentionally mock-data driven so the AI workflow can be v
 - `ai-service/git_eventhub_agent/sample_data.py`
 - `ai-service/git_eventhub_agent/schemas.py`
 - `ai-service/git_eventhub_agent/tools.py`
+
+## PR 2: Workspace Tools
+
+Commit Message:
+
+`feat(ai-service): add approval-gated workspace tools`
+
+PR Title:
+
+`Add approval-gated Google Workspace tools`
+
+PR Description:
+
+Adds approval-gated Google Workspace tools for Drive, Gmail, Meet, Calendar,
+Chat, Gemini-adjacent orchestration, Docs, Sheets, Slides, Keep, Sites
+limitations, Forms, Tasks, NotebookLM Enterprise, and AppSheet. Tools return
+planned actions by default and execute only when `execute=True` is passed with
+Google Application Default Credentials or the relevant AppSheet access key
+configured.
+
+Files To Upload:
+
+- `ai-service/git_eventhub_agent/agent.py`
+- `ai-service/git_eventhub_agent/workspace_tools.py`
+- `ai-service/tests/test_workflow.py`
 - `.agents/plans/ai-service-adk-v1.md`
