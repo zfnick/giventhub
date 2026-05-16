@@ -25,6 +25,7 @@ from .workspace_tools import (
     SHEETS_TOOLS,
     SLIDES_TOOLS,
     draft_workspace_actions,
+    require_oauth_token,
 )
 
 
@@ -186,6 +187,11 @@ root_agent = LlmAgent(
         "create, read, update, or delete.\n"
         "3. file (OPTIONAL) — An uploaded file (e.g. a playbook JSON, CSV, or "
         "template) to use as context for the operation.\n\n"
+        "AUTH FIRST:\n"
+        "Before routing, planning, or executing any Workspace operation, call "
+        "require_oauth_token with the provided oauth_token. If oauth_token is "
+        "missing or empty, stop and ask for it. Never echo the token back to "
+        "the user.\n\n"
         "ROUTING RULES:\n"
         "Based on the instruction, route to the correct domain agent:\n"
         "- Files/folders → drive_agent\n"
@@ -211,7 +217,7 @@ root_agent = LlmAgent(
         "- Never claim an action was executed unless a tool returned executed=true.\n"
         "- For destructive operations (delete, send email), always confirm first."
     ),
-    tools=[draft_workspace_actions],
+    tools=[require_oauth_token, draft_workspace_actions],
     sub_agents=[
         drive_agent,
         docs_agent,

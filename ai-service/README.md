@@ -33,10 +33,12 @@ Current tool layer:
 - `workspace_tools.py`: approval-gated tools for the broader Google Workspace suite.
 - `sample_data.py`: local demo data standing in for Firestore.
 
-Workspace execution is disabled by default. Tool calls return `status:
-planned` unless `execute=True` is supplied. When executed, the service uses
-Google Application Default Credentials with per-API Workspace scopes. Calendar
-event creation uses `sendUpdates=none` so execution does not email attendees.
+Workspace planning and execution require the end user's Google OAuth token to
+be registered first with `require_oauth_token`. After that, tool calls return
+`status: planned` unless `execute=True` is supplied. When executed, the service
+builds Google API clients from that OAuth token with per-API Workspace scopes.
+Calendar event creation uses `sendUpdates=none` so execution does not email
+attendees.
 
 Production integrations still missing:
 
@@ -101,12 +103,9 @@ GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_LOCATION=global
 ```
 
-Authenticate locally:
-
-```sh
-gcloud auth application-default login
-gcloud config set project your-project-id
-```
+Provide an end-user Google OAuth access token in the ADK request payload or
+interactive prompt. The agent registers it first and never includes it in tool
+responses.
 
 ## Run
 
@@ -118,5 +117,6 @@ adk run git_eventhub_agent
 Try:
 
 ```text
-Find promising climate-tech startups that Cradle should reconnect with and draft outreach.
+oauth_token: ya29.example-token
+instruction: Create a Drive folder called Climate Hackathon Workspace. Do not execute yet.
 ```

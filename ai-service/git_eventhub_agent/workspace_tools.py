@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import base64
+from contextvars import ContextVar
 import json
 import os
 from email.message import EmailMessage
 from typing import Any
 
-import google.auth
-import google.auth.transport.requests
 import requests
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 from .schemas import WorkspaceDraft
@@ -18,6 +18,8 @@ DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 GOOGLE_DOC_MIME_TYPE = "application/vnd.google-apps.document"
 GOOGLE_SLIDES_MIME_TYPE = "application/vnd.google-apps.presentation"
 GOOGLE_SHEET_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
+OAUTH_TOKEN_REQUIRED_MESSAGE = "oauth_token is required before planning or executing Google Workspace actions."
+_WORKSPACE_OAUTH_TOKEN: ContextVar[str] = ContextVar("workspace_oauth_token", default="")
 
 API_SCOPES = {
     "calendar": ["https://www.googleapis.com/auth/calendar"],
@@ -53,7 +55,30 @@ def _workspace_url(kind: str, resource_id: str) -> str:
     return urls[kind].format(resource_id=resource_id)
 
 
+def require_oauth_token(oauth_token: str) -> dict:
+    """Register the end user's OAuth token before any Workspace action."""
+    token = oauth_token.strip()
+    if not token:
+        raise ValueError(OAUTH_TOKEN_REQUIRED_MESSAGE)
+    _WORKSPACE_OAUTH_TOKEN.set(token)
+    return {
+        "status": "ready",
+        "operation": "require_oauth_token",
+        "requires_approval": False,
+        "executed": False,
+        "oauth_token_registered": True,
+    }
+
+
+def _require_oauth_token() -> str:
+    token = _WORKSPACE_OAUTH_TOKEN.get().strip()
+    if not token:
+        raise ValueError(OAUTH_TOKEN_REQUIRED_MESSAGE)
+    return token
+
+
 def _planned_result(operation: str, title: str, payload: dict[str, Any]) -> dict:
+    _require_oauth_token()
     return {
         "status": "planned",
         "operation": operation,
@@ -93,23 +118,22 @@ def _deleted_result(operation: str, title: str, resource_id: str, permanent: boo
 
 
 def _google_service(api_name: str, version: str) -> Any:
-    """Build a dynamic Google API client resource.
+    """Build a dynamic Google API client resource from the user's token.
 
     googleapiclient resources expose API methods dynamically from discovery
     documents, so static analyzers cannot know about members like files() or
     documents(). Returning Any keeps that dynamic boundary contained here.
     """
-    creds, _ = google.auth.default(scopes=API_SCOPES[api_name])
+    creds = Credentials(token=_require_oauth_token(), scopes=API_SCOPES[api_name])
     if api_name in {"forms", "keep", "meet"}:
         return build(api_name, version, credentials=creds, static_discovery=False)
     return build(api_name, version, credentials=creds)
 
 
 def _access_token(scope_key: str = "cloud-platform") -> str:
-    creds, _ = google.auth.default(scopes=API_SCOPES[scope_key])
-    request = google.auth.transport.requests.Request()
-    creds.refresh(request)
-    return creds.token
+    if scope_key not in API_SCOPES:
+        raise KeyError(f"Unknown Google API scope key: {scope_key}")
+    return _require_oauth_token()
 
 
 def _authed_json_request(method: str, url: str, body: dict | None = None, scope_key: str = "cloud-platform") -> dict:
@@ -159,6 +183,7 @@ def _build_email_message(to: str, subject: str, body: str, cc: str = "") -> str:
 
 def draft_workspace_actions(recommendations_json: str) -> list[dict]:
     """Create approval-required Google Workspace draft actions."""
+    _require_oauth_token()
     recommendations = json.loads(recommendations_json)
     drafts: list[WorkspaceDraft] = []
     for rec in recommendations[:3]:
@@ -1635,6 +1660,7 @@ PRODUCTIVITY_TOOLS = [
 
 # Flat list kept for backward compatibility
 WORKSPACE_TOOLS = [
+    require_oauth_token,
     draft_workspace_actions,
     *DRIVE_TOOLS,
     *DOCS_TOOLS,
