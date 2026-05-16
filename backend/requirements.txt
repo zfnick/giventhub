@@ -1,0 +1,10 @@
+fastapi==0.136.1
+uvicorn[standard]==0.32.1
+httpx==0.28.1
+pydantic==2.13.4
+python-dotenv==1.2.2
+python-multipart==0.0.20
+firebase-admin==7.0.0
+google-cloud-firestore==2.21.0
+google-genai==2.3.0
+google-auth==2.53.0

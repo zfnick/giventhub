@@ -748,10 +748,7 @@ function PlaybookStep({
                   isSel ? "border-zinc-900 bg-white shadow-md" : "border-zinc-200 bg-white hover:border-zinc-400"
                 }`}
               >
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded">
-                    {pb.category}
-                  </span>
+                <div className="flex items-center justify-end mb-3">
                   {isSel && (
                     <div className="h-5 w-5 rounded-full bg-zinc-900 flex items-center justify-center">
                       <Check className="h-3 w-3 text-white" />
@@ -904,9 +901,6 @@ function SimilarStep({
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
                 <h3 className="text-base font-extrabold text-zinc-900">{pb.title}</h3>
-                <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded">
-                  {pb.category}
-                </span>
               </div>
               <p className="text-xs text-zinc-500">{pb.hostedBy} · {pb.duration} · {pb.attendees}</p>
               <p className="text-sm text-zinc-600 mt-1.5">{pb.highlight}</p>

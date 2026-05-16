@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Sparkles, Users, Calendar, Plus, Lock, Globe } from "lucide-react";
@@ -17,24 +17,35 @@ import { Badge } from "@/components/ui/badge";
 import { NavBar } from "@/components/NavBar";
 import { EventTypeModal } from "@/components/EventTypeModal";
 import { useAuth } from "@/lib/AuthContext";
+import { apiFetch } from "@/lib/api";
+import { Skeleton } from "@/components/ui/skeleton";
 
-// Mock: in production this would be fetched from Firestore by user ID
-const myPlaybooks = [
-  {
-    id: "stanford-demo-day-2026",
-    title: "Stanford AI Demo Day 2026",
-    description: "A premier showcase of student-led AI startups from Stanford.",
-    attendees: "150-300",
-    duration: "1 Day",
-    category: "Hackathon",
-    visibility: "private",
-    updatedAt: "2 days ago",
-  },
-];
+interface MyPlaybook {
+  id: string;
+  title: string;
+  description: string;
+  attendees: string;
+  duration: string;
+  category: string;
+  visibility: "public" | "private";
+}
+
+function relativeTime(iso?: string | null): string {
+  if (!iso) return "Just now";
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "Just now";
+  const diffSec = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (diffSec < 60) return "Just now";
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+  return `${Math.floor(diffSec / 86400)}d ago`;
+}
 
 export default function MyPlaybooksPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const [myPlaybooks, setMyPlaybooks] = useState<(MyPlaybook & { updatedAt: string })[]>([]);
+  const [fetching, setFetching] = useState(true);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -43,13 +54,84 @@ export default function MyPlaybooksPage() {
     }
   }, [user, loading, router]);
 
-  if (loading || !user) {
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      setFetching(true);
+      try {
+        const res = await apiFetch(user, "/api/playbooks/me");
+        if (cancelled) return;
+        if (!res.ok) {
+          console.error("Failed to load my playbooks:", res.status);
+          setMyPlaybooks([]);
+          return;
+        }
+        const data = await res.json();
+        const list: (MyPlaybook & { updatedAt: string })[] = (data.playbooks ?? []).map(
+          (p: MyPlaybook & { updated_at?: string | null }) => ({
+            id: p.id,
+            title: p.title,
+            description: p.description,
+            attendees: p.attendees,
+            duration: p.duration,
+            category: p.category,
+            visibility: p.visibility,
+            updatedAt: relativeTime(p.updated_at),
+          }),
+        );
+        setMyPlaybooks(list);
+      } catch (err) {
+        console.error("Error loading my playbooks:", err);
+        setMyPlaybooks([]);
+      } finally {
+        if (!cancelled) setFetching(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  if (loading || !user || fetching) {
     return (
       <div className="min-h-screen bg-zinc-50">
         <NavBar />
-        <div className="container mx-auto px-6 py-20 flex items-center justify-center">
-          <div className="h-8 w-8 rounded-full border-2 border-zinc-300 border-t-zinc-900 animate-spin" />
-        </div>
+        <main className="container mx-auto px-6 py-12 max-w-5xl">
+          <div className="flex items-end justify-between mb-10 gap-4">
+            <div>
+              <Skeleton className="h-9 w-48 mb-2" />
+              <Skeleton className="h-4 w-72" />
+            </div>
+            <Skeleton className="h-10 w-40 rounded-lg" />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1, 2, 3].map((i) => (
+              <Card key={i} className="flex flex-col h-full overflow-hidden border-zinc-200">
+                <Skeleton className="h-24 rounded-none" />
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Skeleton className="h-4 w-16" />
+                    <Skeleton className="h-4 w-24" />
+                  </div>
+                  <Skeleton className="h-6 w-3/4 mb-2" />
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-2/3 mt-1" />
+                </CardHeader>
+                <CardContent className="flex-1">
+                  <div className="space-y-2">
+                    <Skeleton className="h-4 w-32" />
+                    <Skeleton className="h-4 w-24" />
+                  </div>
+                </CardContent>
+                <CardFooter className="pt-3 border-t flex justify-end bg-white/50">
+                  <Skeleton className="h-7 w-16 rounded-md" />
+                </CardFooter>
+              </Card>
+            ))}
+          </div>
+        </main>
       </div>
     );
   }
@@ -98,25 +180,22 @@ export default function MyPlaybooksPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {myPlaybooks.map((playbook) => (
               <Link href={`/playbooks/${playbook.id}`} key={playbook.id}>
-                <Card className="flex flex-col h-full hover:border-zinc-300 hover:shadow-md transition-all cursor-pointer group">
-                  <div className="h-24 bg-zinc-900 rounded-t-lg border-b flex items-center justify-center relative overflow-hidden">
+                <Card className="flex flex-col h-full hover:border-zinc-300 hover:shadow-md transition-all cursor-pointer group p-0 overflow-hidden">
+                  <div className="h-24 bg-zinc-900 border-b flex items-center justify-center relative overflow-hidden">
                     <div className="absolute inset-0 bg-gradient-to-br from-zinc-700 to-zinc-900 group-hover:scale-105 transition-transform duration-500" />
-                    <span className="text-zinc-400 font-mono text-xs z-10 tracking-widest">
-                      {playbook.category.toUpperCase()}
-                    </span>
                   </div>
                   <CardHeader className="pb-3">
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex items-center gap-3 mb-1 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
                       {playbook.visibility === "private" ? (
-                        <Badge variant="outline" className="text-xs gap-1 py-0">
-                          <Lock className="h-2.5 w-2.5" /> Private
-                        </Badge>
+                        <div className="flex items-center gap-1">
+                          <Lock className="h-3 w-3" /> Private
+                        </div>
                       ) : (
-                        <Badge variant="outline" className="text-xs gap-1 py-0">
-                          <Globe className="h-2.5 w-2.5" /> Public
-                        </Badge>
+                        <div className="flex items-center gap-1">
+                          <Globe className="h-3 w-3" /> Public
+                        </div>
                       )}
-                      <span className="text-xs text-zinc-400">Updated {playbook.updatedAt}</span>
+                      <span>Updated {playbook.updatedAt}</span>
                     </div>
                     <CardTitle className="text-base leading-snug">{playbook.title}</CardTitle>
                     <CardDescription className="line-clamp-2 text-sm mt-1">
@@ -135,9 +214,9 @@ export default function MyPlaybooksPage() {
                       </div>
                     </div>
                   </CardContent>
-                  <CardFooter className="pt-3 border-t flex justify-end">
-                    <Button size="sm" variant="outline" className="h-7 text-xs px-3">
-                      Open
+                  <CardFooter className="pt-3 border-t flex justify-end bg-white">
+                    <Button size="sm" className="h-7 text-xs px-3 bg-black hover:bg-zinc-800 text-white border-transparent">
+                      View
                     </Button>
                   </CardFooter>
                 </Card>

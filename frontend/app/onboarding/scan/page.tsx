@@ -340,10 +340,7 @@ function ScanWorkspaceContent() {
             </div>
 
             <div className="px-6 py-4 border-b border-zinc-100">
-              <div className="flex items-center justify-between mb-2">
-                <Badge className="bg-zinc-100 text-zinc-900 hover:bg-zinc-200 font-medium text-xs px-2.5 py-0.5">
-                  Hackathon
-                </Badge>
+              <div className="flex items-center justify-end mb-2">
                 <span className="flex items-center gap-1.5 text-xs text-zinc-400 font-medium">
                   <Clock className="h-3 w-3" />
                   Last active: 2 days ago

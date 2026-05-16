@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { PlaybookFlowClient as PlaybookFlow } from "@/components/graph/PlaybookFlowClient";
+import { PlaybookFlowClient as PlaybookFlow, type PlaybookGraphData } from "@/components/graph/PlaybookFlowClient";
+import { useAuth } from "@/lib/AuthContext";
+import { apiFetch } from "@/lib/api";
 import {
   Globe,
   Lock,
@@ -34,6 +36,7 @@ const INITIAL_MESSAGES: Message[] = [
 function ReviewPlaybookContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { user } = useAuth();
   const timing = (searchParams.get("timing") ?? "past") as "past" | "upcoming";
   const [isPublic, setIsPublic] = useState(true);
   const [isPushing, setIsPushing] = useState(false);
@@ -44,6 +47,47 @@ function ReviewPlaybookContent() {
   // Tags
   const [tags, setTags] = useState(["Hackathon", "Artificial Intelligence", "Demo Day"]);
   const [tagInput, setTagInput] = useState("");
+
+  // Dynamic knowledge tree (draft-mode — not yet committed)
+  const [graph, setGraph] = useState<PlaybookGraphData | null>(null);
+  const [graphLoading, setGraphLoading] = useState(true);
+  const draftTitle = "Stanford AI Demo Day 2026";
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch(null, "/api/playbooks/graph", {
+          method: "POST",
+          json: {
+            draft: {
+              title: draftTitle,
+              description,
+              category: "Hackathon",
+              tags,
+            },
+          },
+        });
+        if (cancelled) return;
+        if (!res.ok) {
+          console.error("Review graph failed:", res.status);
+          setGraph(null);
+          return;
+        }
+        setGraph(await res.json());
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Review graph error:", err);
+          setGraph(null);
+        }
+      } finally {
+        if (!cancelled) setGraphLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Chatbot
   const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
@@ -88,22 +132,33 @@ function ReviewPlaybookContent() {
   const handlePublish = async () => {
     setIsPushing(true);
     try {
+      if (!user) throw new Error("Not signed in");
+      const idToken = await user.getIdToken();
       const res = await fetch("http://localhost:8000/api/commit", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
         body: JSON.stringify({
           title: "Stanford AI Demo Day 2026",
           description,
           is_public: isPublic,
           commit_message: "Initial save",
+          tags,
+          timing,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         router.push(`/playbooks/${data.playbook_id}`);
-      } else setIsPushing(false);
-    } catch {
-      setTimeout(() => router.push("/playbooks/stanford-demo-day-2026"), 1500);
+      } else {
+        console.error("Commit failed:", res.status, await res.text());
+        setIsPushing(false);
+      }
+    } catch (err) {
+      console.error("Commit error:", err);
+      setIsPushing(false);
     }
   };
   return (
@@ -112,7 +167,7 @@ function ReviewPlaybookContent() {
         <div className="container mx-auto px-6 flex flex-1 min-h-0 overflow-hidden">
           {/* Left Panel: Configuration & Editor */}
           <div className="flex-1 overflow-y-auto border-r border-zinc-100 pr-12">
-            <div className="py-8 space-y-10">
+            <div className="pb-8 pt-8 space-y-10">
               {/* Page header */}
               <div className="bg-white space-y-2">
                 <button
@@ -132,7 +187,7 @@ function ReviewPlaybookContent() {
                         : "We've scaffolded what you need — review the plan and publish to start running it."}
                     </p>
                   </div>
-                  <div className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-zinc-200 bg-zinc-50">
+                  <div className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-zinc-200 bg-zinc-50">
                     {timing === "past"
                       ? <CalendarCheck className="h-4 w-4 text-zinc-500" />
                       : <CalendarClock className="h-4 w-4 text-zinc-500" />}
@@ -185,7 +240,7 @@ function ReviewPlaybookContent() {
                     <Label className="text-sm font-semibold">Topics</Label>
                     <div className="flex flex-wrap gap-2 mb-2">
                       {tags.map((tag) => (
-                        <span key={tag} className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-zinc-100 text-zinc-700 text-xs font-bold border border-zinc-200">
+                        <span key={tag} className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-zinc-100 text-zinc-700 text-xs font-bold border border-zinc-200">
                           {tag}
                           <button onClick={() => setTags(tags.filter(t => t !== tag))} className="hover:text-red-500">
                             <X className="h-3 w-3" />
@@ -225,8 +280,8 @@ function ReviewPlaybookContent() {
                 </div>
 
                 <div className="pl-11">
-                  <div className="h-[600px] w-full border border-zinc-200 rounded-2xl overflow-hidden bg-zinc-50 shadow-inner">
-                    <PlaybookFlow />
+                  <div className="h-[600px] w-full overflow-hidden bg-transparent">
+                    <PlaybookFlow graph={graph} loading={graphLoading} />
                   </div>
                   <p className="text-[11px] text-zinc-400 mt-3 flex items-center gap-1.5 px-1">
                     <Bot className="h-3 w-3" />
@@ -236,7 +291,7 @@ function ReviewPlaybookContent() {
               </section>
 
               {/* ── Section 3: Visibility & Rights ── */}
-              <section className="space-y-6 pb-12">
+              <section className="space-y-6">
                 <div className="flex items-center gap-3">
                   <div className="flex-shrink-0 w-8 h-8 rounded-full bg-zinc-900 text-white flex items-center justify-center text-sm font-bold">
                     3
@@ -282,7 +337,7 @@ function ReviewPlaybookContent() {
                     </button>
                   </div>
 
-                  <div className="flex items-center justify-end pt-6 pb-12">
+                  <div className="flex items-center justify-end pt-6">
                     <Button
                       onClick={handlePublish}
                       disabled={isPushing}
@@ -392,7 +447,20 @@ function ReviewPlaybookContent() {
 
 export default function ReviewPlaybookPage() {
   return (
-    <Suspense fallback={<div className="h-screen flex items-center justify-center"><div className="h-8 w-8 rounded-full border-4 border-zinc-200 border-t-zinc-900 animate-spin" /></div>}>
+    <Suspense fallback={
+      <div className="h-screen flex flex-col bg-white">
+        <div className="container mx-auto px-6 py-12 flex flex-1 gap-12">
+          <div className="flex-1 space-y-8">
+            <div className="space-y-4">
+              <div className="h-10 w-64 bg-zinc-100 animate-pulse rounded-md" />
+              <div className="h-4 w-96 bg-zinc-50 animate-pulse rounded-md" />
+            </div>
+            <div className="h-[400px] bg-zinc-50 animate-pulse rounded-xl" />
+          </div>
+          <div className="w-[420px] bg-zinc-50 animate-pulse rounded-xl" />
+        </div>
+      </div>
+    }>
       <ReviewPlaybookContent />
     </Suspense>
   );
