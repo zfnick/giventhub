@@ -23,50 +23,50 @@ const PHASES: Phase[] = [
   {
     label: "Scanning your Workspace",
     sublabel: "Looking through your recent Google Drive files...",
-    targetPct: 18,
-    durationMs: 1400,
+    targetPct: 15,
+    durationMs: 1600,
     skeleton: "files",
   },
   {
     label: "Found an event cluster!",
     sublabel: "Looks like there's a group of related files here.",
-    targetPct: 35,
-    durationMs: 1200,
+    targetPct: 30,
+    durationMs: 1600,
+    skeleton: "files",
+  },
+  {
+    label: "Reading the data",
+    sublabel: "Parsing docs, sheets, and slides in detail...",
+    targetPct: 45,
+    durationMs: 1600,
     skeleton: "files",
   },
   {
     label: "Getting relevant information",
     sublabel: "Pulling metadata, participants, and timestamps...",
-    targetPct: 52,
-    durationMs: 1400,
-    skeleton: "graph",
-  },
-  {
-    label: "Reading the data",
-    sublabel: "Parsing docs, sheets, and forms in detail...",
-    targetPct: 68,
-    durationMs: 1300,
+    targetPct: 60,
+    durationMs: 1600,
     skeleton: "graph",
   },
   {
     label: "Structuring the data",
     sublabel: "Mapping relationships and building the knowledge tree...",
-    targetPct: 82,
-    durationMs: 1200,
+    targetPct: 80,
+    durationMs: 1600,
     skeleton: "summary",
   },
   {
     label: "Generating summary",
     sublabel: "Writing the playbook draft from what was found...",
     targetPct: 95,
-    durationMs: 1000,
+    durationMs: 1600,
     skeleton: "summary",
   },
   {
     label: "Done!",
     sublabel: "Your event playbook is ready to review.",
     targetPct: 100,
-    durationMs: 600,
+    durationMs: 800,
     skeleton: "done",
   },
 ];
@@ -99,8 +99,11 @@ function Shimmer({ className }: { className: string }) {
 }
 
 function SkeletonFiles({ phaseIndex }: { phaseIndex: number }) {
-  // Reveal files as phases progress. Phase 0 shows 2 files, Phase 1 shows all 4 files.
-  const visible = phaseIndex === 0 ? 2 : FILES.length;
+  // Reveal files as phases progress. 
+  // Phase 0: 1 file, Phase 1: 2 files, Phase 2: 4 files.
+  let visible = 1;
+  if (phaseIndex === 1) visible = 2;
+  if (phaseIndex >= 2) visible = FILES.length;
   return (
     <div className="space-y-2.5 w-full">
       {Array.from({ length: 4 }).map((_, i) => (
@@ -297,13 +300,13 @@ function ScanWorkspaceContent() {
           </div>
 
           {/* Skeleton screen — contextual per phase */}
-          <div className={`bg-zinc-50 rounded-2xl border border-zinc-200 p-5 min-h-[220px] w-full flex ${currentSkeleton === "done" ? "items-center justify-center" : "items-start"}`}>
+          <div className={`bg-zinc-50 rounded-2xl border border-zinc-200 p-5 min-h-[220px] w-full flex flex-col ${currentSkeleton === "done" ? "items-center justify-center" : "items-start"}`}>
             {currentSkeleton === "files" && <SkeletonFiles phaseIndex={phaseIndex} />}
             {currentSkeleton === "graph" && <SkeletonGraph />}
             {currentSkeleton === "summary" && <SkeletonSummary />}
             {currentSkeleton === "done" && (
-              <div className="flex flex-col items-center gap-3 text-center">
-                <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center">
+              <div className="flex flex-col items-center justify-center gap-3 text-center">
+                <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
                   <CheckCircle2 className="h-6 w-6 text-green-600" />
                 </div>
                 <p className="text-sm font-semibold text-zinc-700">Playbook ready</p>

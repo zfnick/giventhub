@@ -27,8 +27,8 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 flex items-center justify-center relative overflow-hidden transition-colors duration-300">
       {/* Background gradients */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none" />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-purple-500/10 rounded-full blur-[100px] pointer-events-none mix-blend-multiply" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-zinc-200/20 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-zinc-300/20 rounded-full blur-[100px] pointer-events-none mix-blend-multiply" />
 
       <div className="relative z-10 w-full max-w-md p-8 bg-white/70 backdrop-blur-xl rounded-3xl border border-zinc-200 shadow-xl">
         <div className="flex justify-center mb-8">
@@ -46,7 +46,7 @@ export default function LoginPage() {
 
         <div className="space-y-4 mb-8">
           <div className="flex items-center gap-3 p-4 rounded-xl bg-zinc-100/80 border border-zinc-200">
-            <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
+            <div className="p-2 bg-zinc-100 text-zinc-600 rounded-lg">
               <FileText className="h-5 w-5" />
             </div>
             <div className="text-sm">
@@ -56,7 +56,7 @@ export default function LoginPage() {
           </div>
           
           <div className="flex items-center gap-3 p-4 rounded-xl bg-zinc-100/80 border border-zinc-200">
-            <div className="p-2 bg-purple-100 text-purple-600 rounded-lg">
+            <div className="p-2 bg-zinc-100 text-zinc-600 rounded-lg">
               <Database className="h-5 w-5" />
             </div>
             <div className="text-sm">
@@ -70,12 +70,13 @@ export default function LoginPage() {
           <Button 
             onClick={handleGoogleSignIn} 
             disabled={isLoading}
-            className="w-full h-12 bg-white hover:bg-zinc-50 text-zinc-900 border border-zinc-200 shadow-sm font-semibold text-base gap-2 rounded-xl transition-all disabled:opacity-50"
+            className="w-full h-12 bg-black hover:bg-zinc-800 text-white shadow-lg shadow-zinc-200 font-semibold text-base gap-3 rounded-xl transition-all disabled:opacity-50"
           >
             {isLoading ? (
               <Loader2 className="h-5 w-5 animate-spin" />
             ) : (
-              <svg className="h-5 w-5" viewBox="0 0 24 24">
+              <div className="bg-white p-1 rounded-lg">
+                <svg className="h-4 w-4" viewBox="0 0 24 24">
                 <path
                   d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
                   fill="#4285F4"
@@ -93,6 +94,7 @@ export default function LoginPage() {
                   fill="#EA4335"
                 />
               </svg>
+              </div>
             )}
             {isLoading ? "Connecting..." : "Continue with Google"}
           </Button>

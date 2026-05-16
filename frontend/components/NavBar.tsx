@@ -14,9 +14,11 @@ import { ReactNode } from "react";
 
 interface NavBarProps {
   left?: ReactNode;
+  hideBorder?: boolean;
+  isFullWidth?: boolean;
 }
 
-export function NavBar({ left }: NavBarProps) {
+export function NavBar({ left, hideBorder, isFullWidth }: NavBarProps) {
   const { user, loading } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -30,8 +32,8 @@ export function NavBar({ left }: NavBarProps) {
   };
 
   return (
-    <nav className="border-b bg-white sticky top-0 z-50">
-      <div className="container mx-auto px-6 h-16 flex items-center gap-4">
+    <nav className={`bg-white sticky top-0 z-50 ${hideBorder ? "" : "border-b"}`}>
+      <div className={`${isFullWidth ? "w-full" : "container mx-auto"} px-6 h-16 flex items-center gap-4`}>
         {/* Left: logo */}
         <div className="flex items-center gap-3 shrink-0">
           {left}

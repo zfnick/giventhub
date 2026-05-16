@@ -8,14 +8,47 @@ import { Sparkles, Search } from "lucide-react";
 
 export default function ImportEventPage() {
   const [eventName, setEventName] = useState("");
+  const [isSearching, setIsSearching] = useState(false);
   const router = useRouter();
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (eventName.trim()) {
-      router.push(`/onboarding/scan?name=${encodeURIComponent(eventName.trim())}`);
+      setIsSearching(true);
+      // Brief pause for the "Let us search it for you" wow moment
+      setTimeout(() => {
+        router.push(`/onboarding/scan?name=${encodeURIComponent(eventName.trim())}`);
+      }, 1800);
     }
   };
+
+  if (isSearching) {
+    return (
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center px-6">
+        <div className="w-full max-w-md text-center space-y-6 animate-in fade-in zoom-in-95 duration-500">
+          <div className="relative">
+            <div className="absolute inset-0 bg-zinc-900 rounded-full blur-2xl opacity-5 animate-pulse" />
+            <div className="relative inline-flex h-20 w-20 items-center justify-center rounded-2xl bg-black mb-4 transform rotate-12 transition-transform hover:rotate-0 duration-500">
+              <Search className="h-10 w-10 text-white animate-pulse" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-3xl font-bold tracking-tight text-zinc-900">
+              {eventName}
+            </h1>
+            <p className="text-xl text-zinc-500 font-medium">
+              Let us search it for you...
+            </p>
+          </div>
+          <div className="flex justify-center gap-1">
+            <div className="h-1.5 w-1.5 bg-zinc-900 rounded-full animate-bounce [animation-delay:-0.3s]" />
+            <div className="h-1.5 w-1.5 bg-zinc-900 rounded-full animate-bounce [animation-delay:-0.15s]" />
+            <div className="h-1.5 w-1.5 bg-zinc-900 rounded-full animate-bounce" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-white flex flex-col items-center justify-center px-6 py-12">
@@ -28,7 +61,7 @@ export default function ImportEventPage() {
             What is the name of your event?
           </h1>
           <p className="text-zinc-500">
-            Let us search your Google Workspace for related files.
+            We&apos;ll look through your Google Workspace to find related assets.
           </p>
         </div>
 
@@ -42,8 +75,8 @@ export default function ImportEventPage() {
           />
           <Button
             type="submit"
-            disabled={!eventName.trim()}
-            className="w-full h-12 bg-black hover:bg-zinc-800 text-white gap-2 text-sm font-semibold rounded-xl shadow-lg"
+            disabled={!eventName.trim() || isSearching}
+            className="w-full h-12 bg-black hover:bg-zinc-800 text-white gap-2 text-sm font-semibold rounded-xl shadow-lg shadow-zinc-200"
           >
             <Sparkles className="h-4 w-4" />
             Search Workspace

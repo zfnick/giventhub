@@ -268,11 +268,11 @@ export default function PlaybookPage({ params }: { params: { id: string } }) {
             </Card>
 
             <Card className="bg-white text-zinc-900 border border-zinc-200 shadow-xl mt-12 overflow-hidden relative">
-              <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 via-purple-500/5 to-pink-500/5" />
+              <div className="absolute inset-0 bg-gradient-to-br from-zinc-100/50 via-zinc-50/30 to-white" />
               <CardContent className="relative z-10 py-6 flex flex-col sm:flex-row sm:items-center gap-6">
                 <div className="flex-1">
                   <CardTitle className="flex items-center gap-2 text-xl mb-2">
-                    <Sparkles className="h-5 w-5 text-indigo-500" />
+                    <Sparkles className="h-5 w-5 text-zinc-900" />
                     Clone & Customize
                   </CardTitle>
                   <CardDescription className="text-zinc-500 text-base">
