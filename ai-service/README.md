@@ -50,7 +50,7 @@ Workspace CRUD coverage:
 
 | App | Create | Read | Update | Delete |
 | --- | --- | --- | --- | --- |
-| Drive | `create_drive_folder` | `list_drive_files`, `get_drive_file` | `update_drive_file_metadata` | `delete_drive_file` |
+| Drive | `create_drive_folder`, `upload_drive_file`, `upload_drive_files` | `list_drive_files`, `get_drive_file` | `update_drive_file_metadata` | `delete_drive_file` |
 | Docs | `create_google_doc` | `get_google_doc` | `update_google_doc_content` | `delete_google_doc` |
 | Forms | `create_google_form` | `get_google_form` | `update_google_form` | `delete_google_form` |
 | Sheets | `create_google_sheet` | `get_google_sheet_values` | `update_google_sheet_values`, `update_sheet_crm` | `delete_google_sheet` |
@@ -106,6 +106,11 @@ GOOGLE_CLOUD_LOCATION=global
 Provide an end-user Google OAuth access token in the ADK request payload or
 interactive prompt. The agent registers it first and never includes it in tool
 responses.
+
+File uploads are accepted as base64 content. Use `upload_drive_file` for one
+file, or `upload_drive_files` with a JSON list of `{file_name, content_base64,
+mime_type, folder_id, description}` objects for batch upload. Upload tools follow
+the same approval flow: they return `status: planned` until `execute=True`.
 
 ## Run
 

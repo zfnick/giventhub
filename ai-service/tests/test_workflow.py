@@ -1,5 +1,6 @@
+import base64
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from git_eventhub_agent import workspace_tools as wt
 from git_eventhub_agent.agent import root_agent
@@ -39,6 +40,8 @@ class WorkflowSmokeTest(unittest.TestCase):
         self.assertEqual(len(tool_names), len(set(tool_names)))
         self.assertIn("require_oauth_token", tool_names)
         self.assertIn("create_drive_folder", tool_names)
+        self.assertIn("upload_drive_file", tool_names)
+        self.assertIn("upload_drive_files", tool_names)
         self.assertIn("create_google_doc", tool_names)
         self.assertIn("create_google_form", tool_names)
         self.assertIn("create_google_sheet", tool_names)
@@ -59,6 +62,11 @@ class WorkflowSmokeTest(unittest.TestCase):
         token_result = wt.require_oauth_token("ya29.test-token")
         planned_calls = [
             wt.create_drive_folder("Demo Workspace"),
+            wt.upload_drive_file("playbook.json", "e30=", mime_type="application/json"),
+            wt.upload_drive_files(
+                '[{"file_name": "rubric.txt", "content_base64": "UnVicmlj"}]',
+                folder_id="folder-123",
+            ),
             wt.create_google_doc("Judging Rubric", "Rubric body"),
             wt.create_google_form("Registration", questions_json='["Name", "Email"]'),
             wt.create_google_sheet("CRM", headers_json='["Name", "Status"]'),
@@ -88,6 +96,62 @@ class WorkflowSmokeTest(unittest.TestCase):
         self.assertTrue(all(call["requires_approval"] for call in planned_calls))
         self.assertTrue(all(not call["executed"] for call in planned_calls))
 
+    def test_upload_drive_file_plans_without_exposing_base64(self) -> None:
+        wt.require_oauth_token("ya29.test-token")
+
+        planned = wt.upload_drive_file(
+            "playbook.json",
+            base64.b64encode(b'{"title": "Demo"}').decode(),
+            folder_id="folder-123",
+        )
+
+        self.assertEqual(planned["operation"], "upload_drive_file")
+        self.assertEqual(planned["payload"]["mime_type"], "application/json")
+        self.assertEqual(planned["payload"]["folder_id"], "folder-123")
+        self.assertNotIn("content_base64", planned["payload"])
+        self.assertTrue(planned["payload"]["has_content"])
+
+    def test_upload_drive_files_plans_batch_uploads(self) -> None:
+        wt.require_oauth_token("ya29.test-token")
+
+        planned = wt.upload_drive_files(
+            '[{"file_name": "one.txt", "content_base64": "T25l"},'
+            ' {"file_name": "two.csv", "content_base64": "YSxi"}]',
+            folder_id="folder-123",
+        )
+
+        self.assertEqual(planned["operation"], "upload_drive_files")
+        self.assertEqual(planned["payload"]["file_count"], 2)
+        self.assertEqual(planned["payload"]["files"][0]["mime_type"], "text/plain")
+        self.assertEqual(planned["payload"]["files"][1]["mime_type"], "text/csv")
+        self.assertNotIn("content_base64", planned["payload"]["files"][0])
+
+    def test_upload_drive_file_executes_drive_upload(self) -> None:
+        wt.require_oauth_token("ya29.test-token")
+        drive_service = MagicMock()
+        drive_service.files.return_value.create.return_value.execute.return_value = {
+            "id": "file-123",
+            "name": "playbook.json",
+            "mimeType": "application/json",
+            "webViewLink": "https://drive.google.com/file/d/file-123/view",
+            "parents": ["folder-123"],
+        }
+
+        with patch("git_eventhub_agent.workspace_tools._google_service", return_value=drive_service):
+            result = wt.upload_drive_file(
+                "playbook.json",
+                base64.b64encode(b'{"title": "Demo"}').decode(),
+                folder_id="folder-123",
+                execute=True,
+            )
+
+        _, kwargs = drive_service.files.return_value.create.call_args
+        self.assertEqual(kwargs["body"]["name"], "playbook.json")
+        self.assertEqual(kwargs["body"]["parents"], ["folder-123"])
+        self.assertIn("media_body", kwargs)
+        self.assertTrue(result["executed"])
+        self.assertEqual(result["resource_id"], "file-123")
+
     def test_google_service_uses_registered_oauth_token(self) -> None:
         wt.require_oauth_token("ya29.test-token")
 
@@ -96,6 +160,26 @@ class WorkflowSmokeTest(unittest.TestCase):
 
         _, kwargs = build.call_args
         self.assertEqual(kwargs["credentials"].token, "ya29.test-token")
+
+    def test_registered_placeholder_preserves_existing_oauth_token(self) -> None:
+        wt.require_oauth_token("ya29.real-token")
+        token_result = wt.require_oauth_token("<registered>")
+
+        with patch("git_eventhub_agent.workspace_tools.build") as build:
+            wt._google_service("calendar", "v3")
+
+        _, kwargs = build.call_args
+        self.assertTrue(token_result["oauth_token_registered"])
+        self.assertEqual(kwargs["credentials"].token, "ya29.real-token")
+
+    def test_oauth_registration_strips_accidental_bearer_prefix(self) -> None:
+        wt.require_oauth_token("Bearer ya29.real-token")
+
+        with patch("git_eventhub_agent.workspace_tools.build") as build:
+            wt._google_service("calendar", "v3")
+
+        _, kwargs = build.call_args
+        self.assertEqual(kwargs["credentials"].token, "ya29.real-token")
 
     def test_google_service_fails_without_oauth_token(self) -> None:
         with self.assertRaisesRegex(ValueError, "oauth_token is required"):

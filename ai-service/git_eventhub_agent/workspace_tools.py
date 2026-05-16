@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import base64
 from contextvars import ContextVar
+import io
 import json
+import mimetypes
 import os
 from email.message import EmailMessage
 from typing import Any
 
 import requests
+import google.auth.credentials
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 
 from .schemas import WorkspaceDraft
 
@@ -19,24 +23,16 @@ GOOGLE_DOC_MIME_TYPE = "application/vnd.google-apps.document"
 GOOGLE_SLIDES_MIME_TYPE = "application/vnd.google-apps.presentation"
 GOOGLE_SHEET_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
 OAUTH_TOKEN_REQUIRED_MESSAGE = "oauth_token is required before planning or executing Google Workspace actions."
+REGISTERED_OAUTH_TOKEN_PLACEHOLDER = "<registered>"
 _WORKSPACE_OAUTH_TOKEN: ContextVar[str] = ContextVar("workspace_oauth_token", default="")
+_WORKSPACE_FILE_STORE: ContextVar[dict] = ContextVar("workspace_file_store", default={})
 
 API_SCOPES = {
     "calendar": ["https://www.googleapis.com/auth/calendar"],
-    "chat": [
-        "https://www.googleapis.com/auth/chat.messages",
-        "https://www.googleapis.com/auth/chat.spaces",
-    ],
-    "cloud-platform": ["https://www.googleapis.com/auth/cloud-platform"],
     "docs": ["https://www.googleapis.com/auth/documents"],
     "drive": ["https://www.googleapis.com/auth/drive"],
     "forms": ["https://www.googleapis.com/auth/forms.body"],
-    "gmail": [
-        "https://www.googleapis.com/auth/gmail.compose",
-        "https://www.googleapis.com/auth/gmail.modify",
-    ],
-    "keep": ["https://www.googleapis.com/auth/keep"],
-    "meet": ["https://www.googleapis.com/auth/meetings.space.created"],
+    "gmail": ["https://www.googleapis.com/auth/gmail.modify"],
     "sheets": ["https://www.googleapis.com/auth/spreadsheets"],
     "slides": ["https://www.googleapis.com/auth/presentations"],
     "tasks": ["https://www.googleapis.com/auth/tasks"],
@@ -55,12 +51,25 @@ def _workspace_url(kind: str, resource_id: str) -> str:
     return urls[kind].format(resource_id=resource_id)
 
 
+def normalize_oauth_token(oauth_token: str) -> str:
+    """Normalize token values from headers, Swagger UI, and agent prompts."""
+    token = oauth_token.strip().strip('"').strip("'").strip()
+    while token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    return token
+
+
 def require_oauth_token(oauth_token: str) -> dict:
     """Register the end user's OAuth token before any Workspace action."""
-    token = oauth_token.strip()
+    token = normalize_oauth_token(oauth_token)
     if not token:
         raise ValueError(OAUTH_TOKEN_REQUIRED_MESSAGE)
-    _WORKSPACE_OAUTH_TOKEN.set(token)
+    if token == REGISTERED_OAUTH_TOKEN_PLACEHOLDER:
+        token = _WORKSPACE_OAUTH_TOKEN.get().strip()
+        if not token:
+            raise ValueError(OAUTH_TOKEN_REQUIRED_MESSAGE)
+    else:
+        _WORKSPACE_OAUTH_TOKEN.set(token)
     return {
         "status": "ready",
         "operation": "require_oauth_token",
@@ -117,6 +126,26 @@ def _deleted_result(operation: str, title: str, resource_id: str, permanent: boo
     }
 
 
+class _StaticCredentials(google.auth.credentials.Credentials):
+    """Minimal credentials that hold a pre-fetched access token and never refresh."""
+
+    def __init__(self, token: str):
+        super().__init__()
+        self.token = token
+
+    def refresh(self, request):
+        # Token is already set; nothing to do.
+        pass
+
+    @property
+    def valid(self):
+        return bool(self.token)
+
+    @property
+    def expired(self):
+        return False
+
+
 def _google_service(api_name: str, version: str) -> Any:
     """Build a dynamic Google API client resource from the user's token.
 
@@ -124,8 +153,8 @@ def _google_service(api_name: str, version: str) -> Any:
     documents, so static analyzers cannot know about members like files() or
     documents(). Returning Any keeps that dynamic boundary contained here.
     """
-    creds = Credentials(token=_require_oauth_token(), scopes=API_SCOPES[api_name])
-    if api_name in {"forms", "keep", "meet"}:
+    creds = _StaticCredentials(token=_require_oauth_token())
+    if api_name in {"forms"}:
         return build(api_name, version, credentials=creds, static_discovery=False)
     return build(api_name, version, credentials=creds)
 
@@ -169,6 +198,42 @@ def _parse_json_list(raw_json: str, default: list) -> list:
     if not isinstance(parsed, list):
         raise ValueError("Expected a JSON list.")
     return parsed
+
+
+def _decode_base64_file(content_base64: str) -> bytes:
+    if not content_base64:
+        raise ValueError("content_base64 is required for file upload.")
+    _, _, encoded = content_base64.partition(",")
+    raw_content = encoded if content_base64.strip().startswith("data:") else content_base64
+    compact_content = "".join(raw_content.split())
+    try:
+        return base64.b64decode(compact_content, validate=True)
+    except ValueError as exc:
+        raise ValueError("content_base64 must be valid base64 data.") from exc
+
+
+def _mime_type_for(file_name: str, mime_type: str = "") -> str:
+    if mime_type:
+        return mime_type
+    guessed_type, _ = mimetypes.guess_type(file_name)
+    return guessed_type or "application/octet-stream"
+
+
+def _upload_payload(
+    file_name: str,
+    content_base64: str,
+    mime_type: str = "",
+    folder_id: str = "",
+    description: str = "",
+) -> dict[str, Any]:
+    return {
+        "file_name": file_name,
+        "mime_type": _mime_type_for(file_name, mime_type),
+        "folder_id": folder_id,
+        "description": description,
+        "content_base64_chars": len(content_base64),
+        "has_content": bool(content_base64),
+    }
 
 
 def _build_email_message(to: str, subject: str, body: str, cc: str = "") -> str:
@@ -332,6 +397,108 @@ def delete_drive_file(file_id: str, permanent: bool = False, execute: bool = Fal
     else:
         drive_service.files().update(fileId=file_id, body={"trashed": True}).execute()
     return _deleted_result("delete_drive_file", file_id, file_id, permanent)
+
+
+def upload_drive_file(
+    file_name: str,
+    content_base64: str,
+    mime_type: str = "",
+    folder_id: str = "",
+    description: str = "",
+    execute: bool = False,
+) -> dict:
+    """Upload one file to Google Drive from base64 content, or return a plan."""
+    file_name = file_name.strip()
+    if not file_name:
+        raise ValueError("file_name is required for file upload.")
+    payload = _upload_payload(file_name, content_base64, mime_type, folder_id, description)
+    if not execute:
+        return _planned_result("upload_drive_file", file_name, payload)
+
+    # Check if content_base64 is a file store reference (e.g. "file_1")
+    resolved_mime_type = payload["mime_type"]
+    store = _WORKSPACE_FILE_STORE.get()
+    if content_base64 in store:
+        file_entry = store[content_base64]
+        file_bytes = file_entry["bytes"]
+        if not resolved_mime_type or resolved_mime_type == "application/octet-stream":
+            resolved_mime_type = file_entry.get("mime_type", resolved_mime_type)
+    else:
+        file_bytes = _decode_base64_file(content_base64)
+    metadata: dict[str, Any] = {"name": file_name}
+    if folder_id:
+        metadata["parents"] = [folder_id]
+    if description:
+        metadata["description"] = description
+
+    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=resolved_mime_type, resumable=False)
+    drive_service = _google_service("drive", "v3")
+    uploaded_file = (
+        drive_service.files()
+        .create(
+            body=metadata,
+            media_body=media,
+            fields="id, name, mimeType, webViewLink, parents",
+        )
+        .execute()
+    )
+    return _executed_result(
+        "upload_drive_file",
+        uploaded_file.get("name", file_name),
+        uploaded_file["id"],
+        uploaded_file.get("webViewLink", ""),
+        {"file": uploaded_file},
+    )
+
+
+def upload_drive_files(files_json: str, folder_id: str = "", execute: bool = False) -> dict:
+    """Upload multiple files to Google Drive from a JSON list, or return a plan."""
+    files = _parse_json_list(files_json, [])
+    if not files:
+        raise ValueError("At least one file is required for batch upload.")
+    payload_files = []
+    for file_entry in files:
+        if not isinstance(file_entry, dict):
+            raise ValueError("Each batch upload item must be a JSON object.")
+        file_name = str(file_entry.get("file_name", "")).strip()
+        if not file_name:
+            raise ValueError("Each batch upload item requires file_name.")
+        item_folder_id = str(file_entry.get("folder_id") or folder_id)
+        payload_files.append(
+            _upload_payload(
+                file_name,
+                str(file_entry.get("content_base64", "")),
+                str(file_entry.get("mime_type", "")),
+                item_folder_id,
+                str(file_entry.get("description", "")),
+            )
+        )
+
+    payload = {"files": payload_files, "folder_id": folder_id, "file_count": len(payload_files)}
+    if not execute:
+        return _planned_result("upload_drive_files", "Drive file batch upload", payload)
+
+    uploaded_files = []
+    for file_entry in files:
+        uploaded_files.append(
+            upload_drive_file(
+                str(file_entry["file_name"]),
+                str(file_entry.get("content_base64", "")),
+                mime_type=str(file_entry.get("mime_type", "")),
+                folder_id=str(file_entry.get("folder_id") or folder_id),
+                description=str(file_entry.get("description", "")),
+                execute=True,
+            )
+        )
+
+    return {
+        "status": "success",
+        "operation": "upload_drive_files",
+        "requires_approval": False,
+        "executed": True,
+        "file_count": len(uploaded_files),
+        "files": uploaded_files,
+    }
 
 
 def create_google_doc(title: str, content: str = "", folder_id: str = "", execute: bool = False) -> dict:
@@ -1183,182 +1350,6 @@ def delete_task(tasklist_id: str, task_id: str, execute: bool = False) -> dict:
     return _deleted_result("delete_task", task_id, task_id, permanent=True)
 
 
-def create_chat_space(display_name: str, space_type: str = "SPACE", execute: bool = False) -> dict:
-    """Create a Google Chat space, or return an approval-required plan."""
-    body = {"displayName": display_name, "spaceType": space_type}
-    payload = {"space": body}
-    if not execute:
-        return _planned_result("create_chat_space", display_name, payload)
-
-    chat_service = _google_service("chat", "v1")
-    space = chat_service.spaces().create(body=body).execute()
-    return _executed_result("create_chat_space", display_name, space["name"], space.get("spaceUri", ""), {"space": space})
-
-
-def list_chat_spaces(page_size: int = 100, execute: bool = False) -> dict:
-    """List Google Chat spaces, or return an approval-required plan."""
-    payload = {"page_size": page_size}
-    if not execute:
-        return _planned_result("list_chat_spaces", "Google Chat spaces", payload)
-
-    chat_service = _google_service("chat", "v1")
-    response = chat_service.spaces().list(pageSize=page_size).execute()
-    return {"status": "success", "operation": "list_chat_spaces", "requires_approval": False, "executed": True, "spaces": response.get("spaces", [])}
-
-
-def get_chat_space(space_name: str, execute: bool = False) -> dict:
-    """Read a Google Chat space, or return an approval-required plan."""
-    payload = {"space_name": space_name}
-    if not execute:
-        return _planned_result("get_chat_space", space_name, payload)
-
-    chat_service = _google_service("chat", "v1")
-    space = chat_service.spaces().get(name=space_name).execute()
-    return {"status": "success", "operation": "get_chat_space", "requires_approval": False, "executed": True, "space": space}
-
-
-def update_chat_space(space_name: str, display_name: str, execute: bool = False) -> dict:
-    """Update a Google Chat space display name, or return an approval-required plan."""
-    payload = {"space_name": space_name, "display_name": display_name}
-    if not execute:
-        return _planned_result("update_chat_space", space_name, payload)
-
-    chat_service = _google_service("chat", "v1")
-    space = chat_service.spaces().patch(name=space_name, updateMask="displayName", body={"displayName": display_name}).execute()
-    return _executed_result("update_chat_space", display_name, space["name"], space.get("spaceUri", ""), {"space": space})
-
-
-def delete_chat_space(space_name: str, execute: bool = False) -> dict:
-    """Delete a Google Chat space, or return an approval-required plan."""
-    payload = {"space_name": space_name}
-    if not execute:
-        return _planned_result("delete_chat_space", space_name, payload)
-
-    chat_service = _google_service("chat", "v1")
-    chat_service.spaces().delete(name=space_name).execute()
-    return _deleted_result("delete_chat_space", space_name, space_name, permanent=True)
-
-
-def create_chat_message(space_name: str, text: str, execute: bool = False) -> dict:
-    """Create a Google Chat message, or return an approval-required plan."""
-    payload = {"space_name": space_name, "text": text}
-    if not execute:
-        return _planned_result("create_chat_message", space_name, payload)
-
-    chat_service = _google_service("chat", "v1")
-    message = chat_service.spaces().messages().create(parent=space_name, body={"text": text}).execute()
-    return _executed_result("create_chat_message", space_name, message["name"], "", {"message": message})
-
-
-def get_chat_message(message_name: str, execute: bool = False) -> dict:
-    """Read a Google Chat message, or return an approval-required plan."""
-    payload = {"message_name": message_name}
-    if not execute:
-        return _planned_result("get_chat_message", message_name, payload)
-
-    chat_service = _google_service("chat", "v1")
-    message = chat_service.spaces().messages().get(name=message_name).execute()
-    return {"status": "success", "operation": "get_chat_message", "requires_approval": False, "executed": True, "message": message}
-
-
-def update_chat_message(message_name: str, text: str, execute: bool = False) -> dict:
-    """Update a Google Chat message, or return an approval-required plan."""
-    payload = {"message_name": message_name, "text": text}
-    if not execute:
-        return _planned_result("update_chat_message", message_name, payload)
-
-    chat_service = _google_service("chat", "v1")
-    message = chat_service.spaces().messages().patch(name=message_name, updateMask="text", body={"text": text}).execute()
-    return _executed_result("update_chat_message", message_name, message["name"], "", {"message": message})
-
-
-def delete_chat_message(message_name: str, execute: bool = False) -> dict:
-    """Delete a Google Chat message, or return an approval-required plan."""
-    payload = {"message_name": message_name}
-    if not execute:
-        return _planned_result("delete_chat_message", message_name, payload)
-
-    chat_service = _google_service("chat", "v1")
-    chat_service.spaces().messages().delete(name=message_name).execute()
-    return _deleted_result("delete_chat_message", message_name, message_name, permanent=True)
-
-
-def create_meet_space(display_name: str = "", execute: bool = False) -> dict:
-    """Create a Google Meet meeting space, or return an approval-required plan."""
-    payload = {"display_name": display_name}
-    if not execute:
-        return _planned_result("create_meet_space", display_name or "Meet space", payload)
-
-    meet_service = _google_service("meet", "v2")
-    space = meet_service.spaces().create(body={}).execute()
-    return _executed_result("create_meet_space", display_name or space["name"], space["name"], space.get("meetingUri", ""), {"space": space})
-
-
-def get_meet_space(space_name: str, execute: bool = False) -> dict:
-    """Read a Google Meet space, or return an approval-required plan."""
-    payload = {"space_name": space_name}
-    if not execute:
-        return _planned_result("get_meet_space", space_name, payload)
-
-    meet_service = _google_service("meet", "v2")
-    space = meet_service.spaces().get(name=space_name).execute()
-    return {"status": "success", "operation": "get_meet_space", "requires_approval": False, "executed": True, "space": space}
-
-
-def end_meet_active_conference(space_name: str, execute: bool = False) -> dict:
-    """End the active Google Meet conference for a space, or return an approval-required plan."""
-    payload = {"space_name": space_name}
-    if not execute:
-        return _planned_result("end_meet_active_conference", space_name, payload)
-
-    meet_service = _google_service("meet", "v2")
-    meet_service.spaces().endActiveConference(name=space_name).execute()
-    return _executed_result("end_meet_active_conference", space_name, space_name, "")
-
-
-def create_keep_note(title: str, text: str, execute: bool = False) -> dict:
-    """Create a Google Keep note, or return an approval-required plan."""
-    body = {"title": title, "body": {"text": {"text": text}}}
-    payload = {"note": body}
-    if not execute:
-        return _planned_result("create_keep_note", title, payload)
-
-    keep_service = _google_service("keep", "v1")
-    note = keep_service.notes().create(body=body).execute()
-    return _executed_result("create_keep_note", title, note["name"], "", {"note": note})
-
-
-def list_keep_notes(page_size: int = 100, filter_query: str = "", execute: bool = False) -> dict:
-    """List Google Keep notes, or return an approval-required plan."""
-    payload = {"page_size": page_size, "filter_query": filter_query}
-    if not execute:
-        return _planned_result("list_keep_notes", "Google Keep notes", payload)
-
-    keep_service = _google_service("keep", "v1")
-    response = keep_service.notes().list(pageSize=page_size, filter=filter_query or None).execute()
-    return {"status": "success", "operation": "list_keep_notes", "requires_approval": False, "executed": True, "notes": response.get("notes", [])}
-
-
-def get_keep_note(note_name: str, execute: bool = False) -> dict:
-    """Read a Google Keep note, or return an approval-required plan."""
-    payload = {"note_name": note_name}
-    if not execute:
-        return _planned_result("get_keep_note", note_name, payload)
-
-    keep_service = _google_service("keep", "v1")
-    note = keep_service.notes().get(name=note_name).execute()
-    return {"status": "success", "operation": "get_keep_note", "requires_approval": False, "executed": True, "note": note}
-
-
-def delete_keep_note(note_name: str, execute: bool = False) -> dict:
-    """Delete a Google Keep note, or return an approval-required plan."""
-    payload = {"note_name": note_name}
-    if not execute:
-        return _planned_result("delete_keep_note", note_name, payload)
-
-    keep_service = _google_service("keep", "v1")
-    keep_service.notes().delete(name=note_name).execute()
-    return _deleted_result("delete_keep_note", note_name, note_name, permanent=True)
 
 
 def list_gmail_messages(query: str = "", max_results: int = 20, execute: bool = False) -> dict:
@@ -1433,129 +1424,6 @@ def trash_gmail_message(message_id: str, execute: bool = False) -> dict:
     return _executed_result("trash_gmail_message", message_id, message["id"], "", {"message": message})
 
 
-def create_notebooklm_notebook(
-    project_number: str,
-    title: str,
-    location: str = "global",
-    endpoint_location: str = "global",
-    execute: bool = False,
-) -> dict:
-    """Create a NotebookLM Enterprise notebook, or return an approval-required plan."""
-    payload = {"project_number": project_number, "title": title, "location": location, "endpoint_location": endpoint_location}
-    if not execute:
-        return _planned_result("create_notebooklm_notebook", title, payload)
-
-    url = f"https://{endpoint_location}-discoveryengine.googleapis.com/v1alpha/projects/{project_number}/locations/{location}/notebooks"
-    notebook = _authed_json_request("POST", url, {"title": title})
-    return _executed_result("create_notebooklm_notebook", title, notebook.get("name", ""), "", {"notebook": notebook})
-
-
-def get_notebooklm_notebook(
-    project_number: str,
-    notebook_id: str,
-    location: str = "global",
-    endpoint_location: str = "global",
-    execute: bool = False,
-) -> dict:
-    """Read a NotebookLM Enterprise notebook, or return an approval-required plan."""
-    payload = {"project_number": project_number, "notebook_id": notebook_id, "location": location, "endpoint_location": endpoint_location}
-    if not execute:
-        return _planned_result("get_notebooklm_notebook", notebook_id, payload)
-
-    url = f"https://{endpoint_location}-discoveryengine.googleapis.com/v1alpha/projects/{project_number}/locations/{location}/notebooks/{notebook_id}"
-    notebook = _authed_json_request("GET", url)
-    return {"status": "success", "operation": "get_notebooklm_notebook", "requires_approval": False, "executed": True, "notebook": notebook}
-
-
-def share_notebooklm_notebook(
-    project_number: str,
-    notebook_id: str,
-    account_roles_json: str,
-    location: str = "global",
-    endpoint_location: str = "global",
-    execute: bool = False,
-) -> dict:
-    """Share a NotebookLM Enterprise notebook, or return an approval-required plan."""
-    account_roles = _parse_json_list(account_roles_json, [])
-    payload = {"project_number": project_number, "notebook_id": notebook_id, "account_roles": account_roles}
-    if not execute:
-        return _planned_result("share_notebooklm_notebook", notebook_id, payload)
-
-    url = f"https://{endpoint_location}-discoveryengine.googleapis.com/v1alpha/projects/{project_number}/locations/{location}/notebooks/{notebook_id}:share"
-    response = _authed_json_request("POST", url, {"accountAndRoles": account_roles})
-    return _executed_result("share_notebooklm_notebook", notebook_id, notebook_id, "", {"response": response})
-
-
-def delete_notebooklm_notebooks(
-    project_number: str,
-    notebook_names_json: str,
-    location: str = "global",
-    endpoint_location: str = "global",
-    execute: bool = False,
-) -> dict:
-    """Delete NotebookLM Enterprise notebooks in batch, or return an approval-required plan."""
-    notebook_names = _parse_json_list(notebook_names_json, [])
-    payload = {"project_number": project_number, "location": location, "notebook_names": notebook_names}
-    if not execute:
-        return _planned_result("delete_notebooklm_notebooks", project_number, payload)
-
-    url = f"https://{endpoint_location}-discoveryengine.googleapis.com/v1alpha/projects/{project_number}/locations/{location}/notebooks:batchDelete"
-    response = _authed_json_request("POST", url, {"names": notebook_names})
-    return _executed_result("delete_notebooklm_notebooks", project_number, project_number, "", {"response": response})
-
-
-def call_appsheet_table_action(
-    app_id: str,
-    table_name: str,
-    action: str,
-    rows_json: str = "",
-    properties_json: str = "",
-    region: str = "api.appsheet.com",
-    app_access_key: str = "",
-    execute: bool = False,
-) -> dict:
-    """Call AppSheet Find/Add/Edit/Delete/Action for a table, or return an approval-required plan."""
-    rows = _parse_json_list(rows_json, [])
-    properties = json.loads(properties_json) if properties_json else {}
-    payload = {"app_id": app_id, "table_name": table_name, "action": action, "properties": properties, "rows": rows}
-    if not execute:
-        return _planned_result("call_appsheet_table_action", f"{table_name}:{action}", payload)
-
-    access_key = app_access_key or os.getenv("APPSHEET_APP_ACCESS_KEY", "")
-    if not access_key:
-        raise ValueError("AppSheet app access key is required.")
-    response = requests.post(
-        f"https://{region}/api/v2/apps/{app_id}/tables/{table_name}/Action",
-        headers={"ApplicationAccessKey": access_key, "Content-Type": "application/json"},
-        json={"Action": action, "Properties": properties, "Rows": rows},
-        timeout=30,
-    )
-    response.raise_for_status()
-    return {
-        "status": "success",
-        "operation": "call_appsheet_table_action",
-        "requires_approval": False,
-        "executed": True,
-        "response": response.json() if response.content else {},
-    }
-
-
-def plan_google_vids_action(action: str, details: str = "") -> dict:
-    """Record that Google Vids has no public CRUD API tool implementation."""
-    return _planned_result(
-        "plan_google_vids_action",
-        action,
-        {"details": details, "limitation": "No stable public Google Vids CRUD API is currently wired."},
-    )
-
-
-def plan_google_sites_action(action: str, details: str = "") -> dict:
-    """Record that Google Sites API support is limited to legacy/classic APIs."""
-    return _planned_result(
-        "plan_google_sites_action",
-        action,
-        {"details": details, "limitation": "New Google Sites does not have a full modern CRUD API tool wired."},
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1564,6 +1432,8 @@ def plan_google_sites_action(action: str, details: str = "") -> dict:
 
 DRIVE_TOOLS = [
     create_drive_folder,
+    upload_drive_file,
+    upload_drive_files,
     list_drive_files,
     get_drive_file,
     update_drive_file_metadata,
@@ -1619,21 +1489,6 @@ CALENDAR_TOOLS = [
     delete_calendar_event,
 ]
 
-CHAT_MEET_TOOLS = [
-    create_chat_space,
-    list_chat_spaces,
-    get_chat_space,
-    update_chat_space,
-    delete_chat_space,
-    create_chat_message,
-    get_chat_message,
-    update_chat_message,
-    delete_chat_message,
-    create_meet_space,
-    get_meet_space,
-    end_meet_active_conference,
-]
-
 PRODUCTIVITY_TOOLS = [
     create_task_list,
     list_task_lists,
@@ -1645,17 +1500,6 @@ PRODUCTIVITY_TOOLS = [
     get_task,
     update_task,
     delete_task,
-    create_keep_note,
-    list_keep_notes,
-    get_keep_note,
-    delete_keep_note,
-    create_notebooklm_notebook,
-    get_notebooklm_notebook,
-    share_notebooklm_notebook,
-    delete_notebooklm_notebooks,
-    call_appsheet_table_action,
-    plan_google_vids_action,
-    plan_google_sites_action,
 ]
 
 # Flat list kept for backward compatibility
@@ -1669,6 +1513,5 @@ WORKSPACE_TOOLS = [
     *SLIDES_TOOLS,
     *GMAIL_TOOLS,
     *CALENDAR_TOOLS,
-    *CHAT_MEET_TOOLS,
     *PRODUCTIVITY_TOOLS,
 ]
