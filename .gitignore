@@ -1,3 +1,16 @@
 # some random shit here
-__pycache__/
+
+# Python
+.venv/
 venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets
+.env
+token.json
+client_secret.json
+
+# OS
+.DS_Store
