@@ -43,7 +43,6 @@ attendees.
 Production integrations still missing:
 
 - Firestore relationship graph queries.
-- Backend API route that calls this ADK service from `/api/adapt`.
 - Optional vector search for semantic matching across event assets.
 
 Workspace CRUD coverage:
@@ -113,6 +112,35 @@ mime_type, folder_id, description}` objects for batch upload. Upload tools follo
 the same approval flow: they return `status: planned` until `execute=True`.
 
 ## Run
+
+### HTTP service (used by the backend)
+
+`server.py` is a standalone FastAPI app that wraps the ADK agent. The
+gieventhub backend calls it over HTTP; the two are separate, independently
+deployable entities.
+
+```sh
+source .venv/bin/activate
+python server.py            # local dev, :8080 with reload
+# or: uvicorn server:app --host 0.0.0.0 --port 8080
+```
+
+Point the backend at it by setting `AI_SERVICE_URL=http://localhost:8080` in
+`backend/.env`. When this service is down or unset, the backend falls back to
+its own stubs.
+
+Endpoints (every one accepts `{ oauth_token, prompt, files? }`):
+
+| Endpoint | Purpose | Response |
+| --- | --- | --- |
+| `GET /health` | Liveness + agent name | `{ status, agent }` |
+| `POST /scan` | Detect an event cluster in Drive | `ScanResponse` JSON |
+| `POST /adapt` | Clone + customize a playbook | `{ workspaceUrl, workspace_drafts }` |
+| `POST /clone-playbook` | Clone a playbook's Workspace assets | `{ summary, events }` |
+| `POST /invite-mentors` | Mentor invites + calendar holds | `{ summary, events }` |
+| `POST /run` | Raw prompt escape hatch | `{ summary, events }` |
+
+### Interactive CLI
 
 ```sh
 source .venv/bin/activate

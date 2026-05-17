@@ -53,19 +53,25 @@ function GoogleDriveIcon({ className }: { className?: string }) {
   );
 }
 import { auth, googleProvider } from "@/lib/firebase";
-import { signInWithPopup } from "firebase/auth";
+import { signInWithPopup, GoogleAuthProvider } from "firebase/auth";
+import { useAuth } from "@/lib/AuthContext";
 
 export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
+  const { setGoogleAccessToken } = useAuth();
 
   const handleGoogleSignIn = async () => {
     setIsLoading(true);
     try {
       const result = await signInWithPopup(auth, googleProvider);
-      // Success, you can access result.user here if needed
+      // Capture the Workspace OAuth access token — it's only exposed on the
+      // sign-in result, never on the persisted Firebase User. The ai-service
+      // needs it to read Drive / write Docs / send Gmail on the user's behalf.
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      setGoogleAccessToken(credential?.accessToken ?? null);
       console.log("Logged in as:", result.user.email);
-      router.push("/onboarding/scan");
+      router.push("/");
     } catch (error) {
       console.error("Error signing in with Google:", error);
       setIsLoading(false);

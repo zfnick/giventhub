@@ -6,6 +6,7 @@ import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sparkles, Clock, Files, CheckCircle2, CalendarCheck, CalendarClock } from "lucide-react";
+import { useAuth } from "@/lib/AuthContext";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -89,11 +90,11 @@ const FILES = [
 
 // ─── Skeleton components ──────────────────────────────────────────────────────
 
-function Shimmer({ className }: { className: string }) {
+function Shimmer({ className, style }: { className?: string; style?: React.CSSProperties }) {
   return (
     <div
-      className={`bg-zinc-200 rounded animate-pulse ${className}`}
-      style={{ backgroundImage: "linear-gradient(90deg, #e4e4e7 25%, #f4f4f5 50%, #e4e4e7 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.5s infinite" }}
+      className={`bg-zinc-200 rounded animate-pulse ${className || ""}`}
+      style={{ backgroundImage: "linear-gradient(90deg, #e4e4e7 25%, #f4f4f5 50%, #e4e4e7 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.5s infinite", ...style }}
     />
   );
 }
@@ -200,6 +201,7 @@ function ScanWorkspaceContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const eventName = searchParams.get("name") || "Stanford AI Demo Day 2026";
+  const { googleAccessToken } = useAuth();
 
   const phase = PHASES[phaseIndex];
 
@@ -239,7 +241,12 @@ function ScanWorkspaceContent() {
         const res = await fetch("http://localhost:8000/api/scan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId: "user123", eventName }),
+          body: JSON.stringify({
+            userId: "user123",
+            eventName,
+            // ai-service gates on this — without it the backend silently stubs.
+            googleAccessToken,
+          }),
         });
         
         // Labor illusion: ensure the UI plays for at least 5.5 seconds 

@@ -7,8 +7,12 @@ import {
   Background,
   Node,
   Edge,
+  EdgeProps,
+  InternalNode,
   useNodesState,
   useEdgesState,
+  useInternalNode,
+  getBezierPath,
   Handle,
   Position,
 } from "@xyflow/react";
@@ -115,6 +119,84 @@ const nodeTypes = {
   itemNode: ItemNode,
 };
 
+// ── Floating edges ──────────────────────────────────────────────────────────
+// Nodes are circles, so edges should leave/enter on the border point that
+// faces the other node — not always from the bottom.
+
+function nodeCenter(node: InternalNode) {
+  const w = node.measured?.width ?? 0;
+  const h = node.measured?.height ?? 0;
+  return {
+    cx: node.internals.positionAbsolute.x + w / 2,
+    cy: node.internals.positionAbsolute.y + h / 2,
+    r: Math.min(w, h) / 2,
+  };
+}
+
+function sideOf(ux: number, uy: number): Position {
+  if (Math.abs(ux) >= Math.abs(uy)) {
+    return ux > 0 ? Position.Right : Position.Left;
+  }
+  return uy > 0 ? Position.Bottom : Position.Top;
+}
+
+function getFloatingEdgeParams(source: InternalNode, target: InternalNode) {
+  const s = nodeCenter(source);
+  const t = nodeCenter(target);
+  const dx = t.cx - s.cx;
+  const dy = t.cy - s.cy;
+  const dist = Math.hypot(dx, dy) || 1;
+  const ux = dx / dist;
+  const uy = dy / dist;
+  return {
+    sx: s.cx + ux * s.r,
+    sy: s.cy + uy * s.r,
+    tx: t.cx - ux * t.r,
+    ty: t.cy - uy * t.r,
+    sourcePos: sideOf(ux, uy),
+    targetPos: sideOf(-ux, -uy),
+  };
+}
+
+const FloatingEdge = memo(function FloatingEdge({
+  source,
+  target,
+  markerEnd,
+  style,
+}: EdgeProps) {
+  const sourceNode = useInternalNode(source);
+  const targetNode = useInternalNode(target);
+  if (!sourceNode || !targetNode) return null;
+
+  const { sx, sy, tx, ty, sourcePos, targetPos } = getFloatingEdgeParams(
+    sourceNode,
+    targetNode,
+  );
+  const [path] = getBezierPath({
+    sourceX: sx,
+    sourceY: sy,
+    sourcePosition: sourcePos,
+    targetX: tx,
+    targetY: ty,
+    targetPosition: targetPos,
+    curvature: 0.35,
+  });
+
+  return (
+    <path
+      className="react-flow__edge-path"
+      d={path}
+      markerEnd={markerEnd}
+      style={style}
+      fill="none"
+    />
+  );
+});
+
+const edgeTypes = {
+  floating: FloatingEdge,
+};
+
 // ── Color palette by kind ───────────────────────────────────────────────────
 
 const KIND_COLORS: Record<
@@ -209,6 +291,7 @@ function buildLayout(graph: PlaybookGraphData): { nodes: Node[]; edges: Edge[] }
 
     edges.push({
       id: `e-root-${cat.id}`,
+      type: "floating",
       source: "root",
       target: cat.id,
       style: { stroke: "#a1a1aa", strokeWidth: 2 },
@@ -243,9 +326,10 @@ function buildLayout(graph: PlaybookGraphData): { nodes: Node[]; edges: Edge[] }
 
       edges.push({
         id: `e-${cat.id}-${itemId}`,
+        type: "floating",
         source: cat.id,
         target: itemId,
-        style: { stroke: "#cbd5e1", strokeWidth: 1 },
+        style: { stroke: "#cbd5e1", strokeWidth: 1.5 },
       });
     });
   });
@@ -349,6 +433,7 @@ export function PlaybookFlow({ graph, loading }: PlaybookFlowProps) {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onNodeClick={onNodeClick}
           fitView
           fitViewOptions={{ padding: 0.2 }}

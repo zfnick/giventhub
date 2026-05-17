@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>gieventhub — System Architecture</title>
+<style>
+  :root {
+    --zinc-950:#09090b; --zinc-900:#18181b; --zinc-700:#3f3f46;
+    --zinc-600:#52525b; --zinc-500:#71717a; --zinc-400:#a1a1aa;
+    --zinc-300:#d4d4d8; --zinc-200:#e4e4e7; --zinc-100:#f4f4f5; --zinc-50:#fafafa;
+    --emerald:#059669; --blue:#1a73e8; --amber:#ffa000;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body {
+    background:#e9eaee;
+    font-family:'Inter','Segoe UI',-apple-system,BlinkMacSystemFont,sans-serif;
+    color:var(--zinc-900);
+    -webkit-font-smoothing:antialiased;
+    display:flex; justify-content:center; padding:28px;
+  }
+
+  /* ── Single screenshot frame · 16:9 ─────────────────── */
+  .frame {
+    position:relative;
+    width:1600px; height:900px;
+    background:
+      radial-gradient(820px 440px at 14% -10%, #eef2ff 0%, transparent 62%),
+      radial-gradient(820px 440px at 88% -8%, #ecfdf5 0%, transparent 60%),
+      #fafafa;
+    border:1px solid var(--zinc-300);
+    border-radius:20px;
+    box-shadow:0 24px 60px -24px rgba(9,9,11,.32);
+    overflow:hidden;
+  }
+
+  /* ── Header ─────────────────────────────────────────── */
+  .header {
+    position:absolute; left:48px; right:48px; top:36px;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .brand { display:flex; align-items:center; gap:14px; }
+  .brand .logo {
+    width:46px; height:46px; border-radius:13px; background:var(--zinc-950);
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 6px 18px rgba(9,9,11,.28);
+  }
+  .brand h1 { font-size:24px; font-weight:800; letter-spacing:-.022em; }
+  .brand .sub { font-size:12.5px; color:var(--zinc-500); font-weight:500; margin-top:3px; }
+  .runpill {
+    display:flex; align-items:center; gap:10px;
+    background:#fff; border:1px solid var(--zinc-200);
+    border-radius:999px; padding:8px 16px 8px 9px;
+    box-shadow:0 6px 16px -8px rgba(9,9,11,.25);
+  }
+  .runpill .rico {
+    width:30px; height:30px; border-radius:9px;
+    background:linear-gradient(135deg,#4285f4,#1a73e8);
+    display:flex; align-items:center; justify-content:center; flex:none;
+  }
+  .runpill .rtxt { font-size:12.5px; font-weight:750; letter-spacing:-.012em; }
+  .runpill .rtxt span { display:block; font-size:10px; font-weight:600; color:var(--zinc-500); margin-top:1px; }
+
+  /* ── Connector layer ────────────────────────────────── */
+  #wires { position:absolute; inset:0; z-index:1; }
+
+  /* ── Cloud Run grouping box ─────────────────────────── */
+  .cloudbox {
+    position:absolute; left:330px; top:420px; width:940px; height:200px; z-index:2;
+    border:1.6px dashed #34a853; border-radius:22px;
+    background:linear-gradient(180deg, rgba(52,168,83,.085), rgba(52,168,83,.03));
+  }
+  .cloudtab {
+    position:absolute; left:446px; top:404px; z-index:5;
+    display:flex; align-items:center; gap:9px;
+    background:#fff; border:1.5px solid #34a853;
+    border-radius:999px; padding:6px 15px 6px 7px;
+    box-shadow:0 6px 16px -8px rgba(52,168,83,.55);
+  }
+  .cloudtab .ci {
+    width:26px; height:26px; border-radius:8px;
+    background:linear-gradient(135deg,#4285f4,#1a73e8);
+    display:flex; align-items:center; justify-content:center; flex:none;
+  }
+  .cloudtab b { font-size:12.5px; font-weight:780; letter-spacing:-.012em; }
+
+  /* ── Nodes ──────────────────────────────────────────── */
+  .node { position:absolute; width:84px; height:84px; z-index:3; }
+  .circ {
+    width:84px; height:84px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center; background:#fff;
+    box-shadow:0 2px 5px rgba(9,9,11,.1), 0 16px 28px -14px rgba(9,9,11,.4);
+  }
+  .circ.ring { border:2.5px solid rgba(255,255,255,.85); }
+  .lbl {
+    position:absolute; top:96px; left:50%; transform:translateX(-50%);
+    width:188px; text-align:center;
+  }
+  .node.up .lbl { top:auto; bottom:96px; }
+  .lbl .t { font-size:13px; font-weight:760; letter-spacing:-.012em; line-height:1.28; }
+  .lbl .s { font-size:10.5px; font-weight:550; color:var(--zinc-500); margin-top:3px; line-height:1.4; }
+  .lbl .t code { font-family:'SF Mono',ui-monospace,Menlo,monospace; font-size:12.5px; }
+
+  /* ── Workspace panel ────────────────────────────────── */
+  .wspanel {
+    position:absolute; left:1300px; top:300px; width:256px; z-index:3;
+    background:#fff; border:1px solid var(--zinc-200);
+    border-top:3px solid #4285f4; border-radius:18px;
+    box-shadow:0 2px 5px rgba(9,9,11,.06), 0 20px 40px -18px rgba(9,9,11,.34);
+    padding:17px 18px 18px;
+  }
+  .wshead { display:flex; align-items:center; gap:10px; }
+  .wshead .gi {
+    width:34px; height:34px; border-radius:9px; background:#e8f0fe;
+    display:flex; align-items:center; justify-content:center; flex:none;
+  }
+  .wshead .tt { font-size:13.5px; font-weight:790; letter-spacing:-.016em; }
+  .wshead .ss { font-size:10px; font-weight:600; color:var(--zinc-500); margin-top:2px; }
+  .wsgrid { display:grid; grid-template-columns:1fr 1fr; gap:9px 10px; margin-top:14px; }
+  .wsitem {
+    display:flex; align-items:center; gap:9px;
+    background:var(--zinc-50); border:1px solid var(--zinc-200);
+    border-radius:10px; padding:7px 9px;
+  }
+  .wsitem .mi {
+    width:30px; height:30px; border-radius:8px; flex:none;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .wsitem span { font-size:11.5px; font-weight:650; color:var(--zinc-700); }
+
+  /* ── Footer ─────────────────────────────────────────── */
+  .legend {
+    position:absolute; left:48px; bottom:62px; z-index:4;
+    display:flex; gap:26px; align-items:center;
+  }
+  .legend .it { display:flex; align-items:center; gap:8px; font-size:11px; color:var(--zinc-600); font-weight:550; }
+  .legend .ln { width:28px; height:0; border-top:2.6px solid var(--zinc-700); }
+  .legend .ln.dash { border-top:2px dashed var(--zinc-400); }
+  .legend .dt { width:11px; height:11px; border-radius:3.5px; }
+  .footnote {
+    position:absolute; left:48px; right:48px; bottom:32px; z-index:4;
+    font-size:11px; color:var(--zinc-500); text-align:center;
+  }
+  .footnote b { color:var(--zinc-700); font-weight:700; }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <!-- ════════ HEADER ════════ -->
+  <div class="header">
+    <div class="brand">
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+          <path d="M12 1.5 1.8 6.6v10.8L12 22.5l10.2-5.1V6.6L12 1.5Z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>
+          <circle cx="12" cy="12" r="3.1" stroke="#34d399" stroke-width="1.6"/>
+          <path d="M12 5v3.9M12 15.1V19M5 8.6l3.4 1.9M15.6 13.5 19 15.4M19 8.6l-3.4 1.9M8.4 13.5 5 15.4" stroke="#34d399" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div>
+        <h1>gieventhub — System Architecture</h1>
+        <div class="sub">Ecosystem linkages, programmed not coordinated · Build With AI 2026 KL</div>
+      </div>
+    </div>
+    <div class="runpill">
+      <div class="rico">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 6l6 6-6 6"/>
+        </svg>
+      </div>
+      <div class="rtxt">Deployed on Google Cloud Run<span>3 services · auto-scaled</span></div>
+    </div>
+  </div>
+
+  <!-- ════════ CONNECTORS ════════ -->
+  <svg id="wires" width="1600" height="900">
+    <defs>
+      <marker id="arr" markerWidth="10" markerHeight="10" refX="7.4" refY="4.5" orient="auto">
+        <path d="M0,0 L9,4.5 L0,9 Z" fill="#3f3f46"/>
+      </marker>
+      <marker id="arrG" markerWidth="10" markerHeight="10" refX="7.4" refY="4.5" orient="auto">
+        <path d="M0,0 L9,4.5 L0,9 Z" fill="#9ca3af"/>
+      </marker>
+      <marker id="arrGs" markerWidth="10" markerHeight="10" refX="1.6" refY="4.5" orient="auto-start-reverse">
+        <path d="M0,0 L9,4.5 L0,9 Z" fill="#9ca3af"/>
+      </marker>
+    </defs>
+
+    <!-- request path · solid -->
+    <g fill="none" stroke="#3f3f46" stroke-width="2.6" marker-end="url(#arr)">
+      <path d="M162,500 H351"/>
+      <path d="M442,500 H621"/>
+      <path d="M712,500 H891"/>
+      <path d="M982,500 H1151"/>
+      <path d="M1242,500 H1298"/>
+    </g>
+
+    <!-- auth & data flow · dashed -->
+    <g fill="none" stroke="#9ca3af" stroke-width="2" stroke-dasharray="6 5">
+      <!-- Firebase Auth -->
+      <path d="M400,278 V457" marker-end="url(#arrG)" marker-start="url(#arrGs)"/>
+      <!-- Firestore -->
+      <path d="M670,543 V727" marker-end="url(#arrG)" marker-start="url(#arrGs)"/>
+      <!-- Gemini · AI Service straight + Backend elbow -->
+      <path d="M940,457 V279" marker-end="url(#arrG)"/>
+      <path d="M670,457 V360 H940"/>
+    </g>
+
+    <!-- connector labels -->
+    <g font-family="Inter,sans-serif" font-size="11" font-weight="650"
+       fill="#52525b" stroke="#fafafa" stroke-width="4.5" paint-order="stroke">
+      <g text-anchor="middle">
+        <text x="257" y="489">HTTPS</text>
+        <text x="532" y="489">REST</text>
+        <text x="802" y="489">delegate</text>
+        <text x="1067" y="489">invoke</text>
+        <text x="1270" y="489">execute</text>
+        <text x="805" y="349" fill="#71717a">reason</text>
+      </g>
+      <text x="378" y="372" text-anchor="end" fill="#71717a">sign-in</text>
+      <text x="692" y="641" text-anchor="start" fill="#71717a">persist</text>
+    </g>
+  </svg>
+
+  <!-- ════════ CLOUD RUN BOX ════════ -->
+  <div class="cloudbox"></div>
+  <div class="cloudtab">
+    <div class="ci">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 6l6 6-6 6"/>
+      </svg>
+    </div>
+    <b>Google Cloud Run</b>
+  </div>
+
+  <!-- ════════ NODES ════════ -->
+
+  <!-- Users -->
+  <div class="node" style="left:78px; top:458px;">
+    <div class="circ" style="background:var(--zinc-100)">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#18181b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+        <circle cx="9" cy="7" r="4"/>
+        <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13A4 4 0 0 1 16 11"/>
+      </svg>
+    </div>
+    <div class="lbl"><div class="t">Ecosystem Operators</div><div class="s">Accelerators · agencies · universities</div></div>
+  </div>
+
+  <!-- Firebase Auth (top) -->
+  <div class="node up" style="left:358px; top:193px;">
+    <div class="circ" style="background:#fff3e0">
+      <svg width="34" height="38" viewBox="0 0 24 28" fill="none">
+        <path d="M3 21 7.2 3.4c.2-.8 1.3-.9 1.7-.2l2.4 4.5L13 3.5c.3-.7 1.3-.7 1.6 0L21 21 12 26 3 21Z" fill="#ffa000"/>
+        <path d="M3 21 7.2 3.4c.2-.8 1.3-.9 1.7-.2L21 21 12 26 3 21Z" fill="#ffca28"/>
+        <path d="M12.6 13.9 9.1 7.7 3 21l9.6-7.1Z" fill="#ff8f00"/>
+        <path d="M3 21 12 26l9-5-2.6-1.9a1 1 0 0 0-1.1 0L3 21Z" fill="#ffa000"/>
+      </svg>
+    </div>
+    <div class="lbl"><div class="t">Firebase Auth</div><div class="s">Google Sign-in · ID tokens</div></div>
+  </div>
+
+  <!-- Frontend -->
+  <div class="node" style="left:358px; top:458px;">
+    <div class="circ ring" style="background:#000">
+      <svg width="38" height="38" viewBox="0 0 24 24" fill="#fff">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10c1.96 0 3.79-.57 5.34-1.55L9.4 9.9v6.5H7.7V7.6h1.7l8.06 11.05A9.96 9.96 0 0 0 22 12c0-5.52-4.48-10-10-10Zm4.3 5.6h1.7v7.3l-1.7-2.33V7.6Z"/>
+      </svg>
+    </div>
+    <div class="lbl"><div class="t">Frontend</div><div class="s">Next.js 16 · React 19 · Tailwind 4</div></div>
+  </div>
+
+  <!-- Backend -->
+  <div class="node" style="left:628px; top:458px;">
+    <div class="circ ring" style="background:#1a73e8">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="3" width="20" height="6" rx="1.6"/>
+        <rect x="2" y="15" width="20" height="6" rx="1.6"/>
+        <path d="M6 6h.01M6 18h.01"/>
+      </svg>
+    </div>
+    <div class="lbl"><div class="t">Backend API</div><div class="s">FastAPI · auth verify · routing</div></div>
+  </div>
+
+  <!-- Gemini (top) -->
+  <div class="node up" style="left:898px; top:193px;">
+    <div class="circ ring" style="background:linear-gradient(135deg,#4285f4,#9b72f2,#d96570)">
+      <svg width="34" height="34" viewBox="0 0 24 24">
+        <path d="M12 0c.3 6.3 5.7 11.7 12 12-6.3.3-11.7 5.7-12 12-.3-6.3-5.7-11.7-12-12C6.3 11.7 11.7 6.3 12 0Z" fill="#fff"/>
+      </svg>
+    </div>
+    <div class="lbl"><div class="t">Gemini · Vertex AI</div><div class="s">Matching · chat · graph generation</div></div>
+  </div>
+
+  <!-- AI Service -->
+  <div class="node" style="left:898px; top:458px;">
+    <div class="circ ring" style="background:#059669">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/>
+        <circle cx="12" cy="12" r="3.4"/>
+      </svg>
+    </div>
+    <div class="lbl"><div class="t">AI Service</div><div class="s">FastAPI · ADK host · OAuth-scoped</div></div>
+  </div>
+
+  <!-- ADK coordinator -->
+  <div class="node" style="left:1158px; top:458px;">
+    <div class="circ ring" style="background:linear-gradient(135deg,#4285f4,#9b72f2)">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="9" width="16" height="11" rx="2.4"/>
+        <path d="M12 9V5M12 5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/>
+        <path d="M9 14h.01M15 14h.01M1 13v3M23 13v3"/>
+      </svg>
+    </div>
+    <div class="lbl"><div class="t"><code>workspace_coordinator</code></div><div class="s">Google ADK · 8 specialist agents</div></div>
+  </div>
+
+  <!-- Firestore (bottom) -->
+  <div class="node" style="left:628px; top:728px;">
+    <div class="circ" style="background:#fff3e0">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none">
+        <path d="M3.8 7.5 12 3l8.2 4.5L12 12 3.8 7.5Z" fill="#ffca28"/>
+        <path d="M3.8 12 12 7.5l8.2 4.5L12 16.5 3.8 12Z" fill="#ffa000"/>
+        <path d="M3.8 16.5 12 12l8.2 4.5L12 21l-8.2-4.5Z" fill="#ff8f00"/>
+      </svg>
+    </div>
+    <div class="lbl"><div class="t">Cloud Firestore</div><div class="s">Playbooks · ecosystem linkage graph</div></div>
+  </div>
+
+  <!-- ════════ WORKSPACE PANEL ════════ -->
+  <div class="wspanel">
+    <div class="wshead">
+      <div class="gi">
+        <svg width="19" height="19" viewBox="0 0 48 48">
+          <path fill="#4285F4" d="M43.6 20.1H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9Z"/>
+          <path fill="#34A853" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44Z"/>
+          <path fill="#FBBC05" d="M12.7 28.1A12 12 0 0 1 12 24c0-1.4.2-2.8.7-4.1l-6.5-5A20 20 0 0 0 4 24c0 3.2.8 6.3 2.2 9l6.5-4.9Z"/>
+          <path fill="#EA4335" d="M24 12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 16.2 4 9.5 8.4 6.2 14.9l6.5 5C14.4 15.3 18.8 12 24 12Z"/>
+        </svg>
+      </div>
+      <div>
+        <div class="tt">Google Workspace APIs</div>
+        <div class="ss">Action surface · draft-by-default</div>
+      </div>
+    </div>
+    <div class="wsgrid">
+      <div class="wsitem"><div class="mi" style="background:#1da462">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"><path d="M12 4 21 19.5H3L12 4Z"/></svg>
+      </div><span>Drive</span></div>
+      <div class="wsitem"><div class="mi" style="background:#4285f4">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-5Z"/><path d="M14 3v5h5M8 13h8M8 17h6"/></svg>
+      </div><span>Docs</span></div>
+      <div class="wsitem"><div class="mi" style="background:#34a853">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M4 15h16M10 3v18M16 3v18"/></svg>
+      </div><span>Sheets</span></div>
+      <div class="wsitem"><div class="mi" style="background:#7c3aed">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h.01M8 12h.01M8 16h.01M12 8h4M12 12h4M12 16h4"/></svg>
+      </div><span>Forms</span></div>
+      <div class="wsitem"><div class="mi" style="background:#fbbc04">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="7" y="9" width="10" height="6" rx="1" fill="#fff"/></svg>
+      </div><span>Slides</span></div>
+      <div class="wsitem"><div class="mi" style="background:#ea4335">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M3 6.5 12 13l9-6.5"/></svg>
+      </div><span>Gmail</span></div>
+      <div class="wsitem"><div class="mi" style="background:#4285f4">
+        <svg width="16" height="16" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2.4" fill="#fff"/><text x="12" y="16" font-size="9" font-weight="700" fill="#4285f4" text-anchor="middle" font-family="Inter">31</text></svg>
+      </div><span>Calendar</span></div>
+      <div class="wsitem"><div class="mi" style="background:#2684fc">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 9.5 17 19 6"/></svg>
+      </div><span>Tasks</span></div>
+    </div>
+  </div>
+
+  <!-- ════════ LEGEND ════════ -->
+  <div class="legend">
+    <div class="it"><span class="ln"></span> Request path (HTTPS / REST)</div>
+    <div class="it"><span class="ln dash"></span> Auth &amp; data flow</div>
+    <div class="it"><span class="dt" style="background:#34a853"></span> Cloud Run — our deployed services</div>
+    <div class="it"><span class="dt" style="background:#ffa000"></span> Managed Google Cloud</div>
+  </div>
+  <div class="footnote">
+    <b>Frontend, Backend and AI Service each run as an independent Google Cloud Run service</b> — containerised, stateless, horizontally auto-scaled. &nbsp;·&nbsp;
+    Workspace mutations are draft-by-default and require human approval &nbsp;·&nbsp; OAuth tokens are request-scoped, never persisted.
+  </div>
+
+</div>
+</body>
+</html>

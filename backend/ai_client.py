@@ -16,7 +16,9 @@ caller decides whether to fall back to a stub.
 """
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -75,6 +77,50 @@ class AIStackClient:
             return resp.json()
         except ValueError as exc:
             raise AIStackUnavailable("AI stack returned non-JSON") from exc
+
+    async def stream(
+        self,
+        endpoint: str,
+        oauth_token: str,
+        prompt: str,
+        files: list[dict[str, Any]] | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream NDJSON events from a `*-stream` ai-service endpoint.
+
+        Yields one parsed dict per line. Raises `AIStackUnavailable` if the
+        stack isn't configured or the connection fails; lines that aren't
+        valid JSON are silently dropped (the model occasionally emits empty
+        lines on heartbeat).
+        """
+        if not self.configured:
+            raise AIStackUnavailable("AI_SERVICE_URL not set")
+
+        payload: dict[str, Any] = {"oauth_token": oauth_token, "prompt": prompt}
+        if files:
+            payload["files"] = files
+        if extra:
+            payload.update(extra)
+
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        try:
+            async with self._client.stream("POST", url, json=payload) as resp:
+                if resp.status_code >= 400:
+                    body = (await resp.aread()).decode(errors="replace")[:300]
+                    log.warning("AI stack stream %s at %s: %s", resp.status_code, url, body)
+                    raise AIStackUnavailable(f"{resp.status_code} from AI stack")
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        yield json.loads(line)
+                    except json.JSONDecodeError:
+                        log.debug("dropping non-JSON stream line: %s", line[:120])
+                        continue
+        except httpx.HTTPError as exc:
+            log.warning("AI stack stream network error at %s: %s", url, exc)
+            raise AIStackUnavailable(str(exc)) from exc
 
     async def close(self) -> None:
         await self._client.aclose()

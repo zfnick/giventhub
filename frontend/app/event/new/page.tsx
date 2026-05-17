@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useAuth } from "@/lib/AuthContext";
+import { apiFetch } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -199,6 +201,7 @@ const STEP_GREETING: Record<Step, string> = {
 
 export default function NewEventPage() {
   const router = useRouter();
+  const { user } = useAuth();
 
   // Flow state
   const [step, setStep] = useState<Step>("mode");
@@ -224,11 +227,12 @@ export default function NewEventPage() {
   // Chat
   const [messages, setMessages] = useState<Message[]>([{ role: "ai", text: STEP_GREETING.mode }]);
   const [chatInput, setChatInput] = useState("");
+  const [sending, setSending] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, sending]);
 
   // Push a contextual AI message when step changes
   useEffect(() => {
@@ -305,24 +309,96 @@ export default function NewEventPage() {
   const toggleTool = (n: string) =>
     setEnabledTools(p => p.includes(n) ? p.filter(x => x !== n) : [...p, n]);
 
-  // ── Chat ─────────────────────────────────────────────────────────
-  const sendMessage = (text?: string) => {
-    const msg = (text ?? chatInput).trim();
-    if (!msg) return;
-    setChatInput("");
-    setMessages(prev => [...prev, { role: "user", text: msg }]);
+  // ── Architect field updates ─────────────────────────────────────
+  // The /api/chat/event-architect response can carry an `updates` patch the
+  // AI wants applied to the form. We trust the backend to have validated
+  // every value against the catalogues we sent, so we just apply what's
+  // there. (Backend silently drops off-catalogue values, so anything that
+  // reaches us is safe to write directly.)
+  type ArchitectUpdates = Partial<{
+    event_name: string;
+    event_date: string;
+    event_format: string;
+    audience: string;
+    goal: string;
+    locked_mentors: string[];
+    locked_sponsors: string[];
+    locked_venue: string;
+    locked_outreach: string[];
+    enabled_tools: string[];
+  }>;
 
-    setTimeout(() => {
-      const lower = msg.toLowerCase();
-      let reply = "On it — refining the draft now. I'll surface options on the left.";
-      if (lower.includes("mentor")) reply = "Pulling from past judge rosters and your community graph. I'll add 3 fresh names to the Mentor card.";
-      else if (lower.includes("sponsor")) reply = "Looking at sponsors who funded similar events. Drafting a warm intro through Priya as well.";
-      else if (lower.includes("venue")) reply = "Filtering by capacity, A/V, and budget. I'll surface 2 alternates in the Venue card.";
-      else if (lower.includes("email") || lower.includes("draft")) reply = "Drafting in Google Docs — I'll drop the link in the Workspace card when ready.";
-      else if (lower.includes("budget")) reply = "Past events ran $32k–$48k all-in. Sponsorship covers ~70% based on the tier mix.";
-      else if (step !== "plan") reply = "Got it. Tell me more on the left and I'll keep stitching the context together.";
+  const applyArchitectUpdates = (updates: ArchitectUpdates | null | undefined) => {
+    if (!updates || typeof updates !== "object") return;
+    if (typeof updates.event_name === "string") setEventName(updates.event_name);
+    if (typeof updates.event_date === "string") setEventDate(updates.event_date);
+    if (typeof updates.event_format === "string") setEventFormat(updates.event_format);
+    if (typeof updates.audience === "string") setAudience(updates.audience);
+    if (typeof updates.goal === "string") setGoal(updates.goal);
+    if (Array.isArray(updates.locked_mentors)) setLockedMentors(updates.locked_mentors);
+    if (Array.isArray(updates.locked_sponsors)) setLockedSponsors(updates.locked_sponsors);
+    if (typeof updates.locked_venue === "string") setLockedVenue(updates.locked_venue);
+    if (Array.isArray(updates.locked_outreach)) setLockedOutreach(updates.locked_outreach);
+    if (Array.isArray(updates.enabled_tools)) setEnabledTools(updates.enabled_tools);
+  };
+
+  // ── Chat ─────────────────────────────────────────────────────────
+  const sendMessage = async (text?: string) => {
+    const msg = (text ?? chatInput).trim();
+    if (!msg || sending) return;
+    setChatInput("");
+    // Capture history BEFORE appending the new message — the backend appends
+    // the message itself, so history must hold only the prior turns.
+    const history = messages.slice(-6);
+    setMessages(prev => [...prev, { role: "user", text: msg }]);
+    setSending(true);
+
+    try {
+      const res = await apiFetch(user, "/api/chat/event-architect", {
+        method: "POST",
+        json: {
+          message: msg,
+          history,
+          context: {
+            step,
+            mode,
+            forked_playbook_id: forkedPlaybookId,
+            event_name: eventName,
+            event_date: eventDate,
+            event_format: eventFormat,
+            audience,
+            goal,
+            locked_mentors: lockedMentors,
+            locked_sponsors: lockedSponsors,
+            locked_venue: lockedVenue,
+            locked_outreach: lockedOutreach,
+            enabled_tools: enabledTools,
+            // Send the canonical catalogues the form draws from so the AI
+            // can ONLY pick real values — anything off-catalogue is dropped
+            // server-side and never reaches our setters.
+            available_formats: FORMATS,
+            available_mentors: MENTORS.map((m) => m.name),
+            available_sponsors: SPONSORS.map((s) => s.name),
+            available_venues: VENUES.map((v) => v.name),
+            available_outreach: OUTREACH.map((o) => o.name),
+            available_tools: WORKSPACE_TOOLS.map((t) => t.label),
+          },
+        },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      applyArchitectUpdates(data?.updates);
+      const reply = (data?.reply ?? "").trim() ||
+        "On it — refining the draft now. I'll surface options on the left.";
       setMessages(prev => [...prev, { role: "ai", text: reply }]);
-    }, 700);
+    } catch {
+      setMessages(prev => [...prev, {
+        role: "ai",
+        text: "I couldn't reach the planner just now — give it another try in a moment.",
+      }]);
+    } finally {
+      setSending(false);
+    }
   };
 
   const launch = () => router.push("/onboarding/review?timing=upcoming");
@@ -416,6 +492,18 @@ export default function NewEventPage() {
                 </div>
               </div>
             ))}
+            {sending && (
+              <div className="flex gap-2.5 items-start">
+                <div className="flex-shrink-0 h-7 w-7 rounded-xl flex items-center justify-center text-white shadow-sm bg-zinc-900">
+                  <Bot className="h-3.5 w-3.5" />
+                </div>
+                <div className="px-3.5 py-3 rounded-2xl bg-zinc-50 border border-zinc-100 flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:-0.3s]" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:-0.15s]" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce" />
+                </div>
+              </div>
+            )}
             <div ref={chatEndRef} />
           </div>
 
@@ -426,7 +514,8 @@ export default function NewEventPage() {
                   <button
                     key={q}
                     onClick={() => sendMessage(q)}
-                    className="whitespace-nowrap shrink-0 px-2.5 py-1 rounded-full border border-zinc-200 bg-white text-[11px] font-semibold text-zinc-600 hover:border-zinc-400 hover:bg-zinc-50 transition-all"
+                    disabled={sending}
+                    className="whitespace-nowrap shrink-0 px-2.5 py-1 rounded-full border border-zinc-200 bg-white text-[11px] font-semibold text-zinc-600 hover:border-zinc-400 hover:bg-zinc-50 transition-all disabled:opacity-40"
                   >
                     {q}
                   </button>
@@ -445,11 +534,12 @@ export default function NewEventPage() {
                     sendMessage();
                   }
                 }}
-                className="min-h-[72px] w-full bg-zinc-50 border-zinc-200 focus-visible:ring-zinc-900 rounded-xl p-3 pr-12 text-sm resize-none"
+                disabled={sending}
+                className="min-h-[72px] w-full bg-zinc-50 border-zinc-200 focus-visible:ring-zinc-900 rounded-xl p-3 pr-12 text-sm resize-none disabled:opacity-60"
               />
               <Button
                 onClick={() => sendMessage()}
-                disabled={!chatInput.trim()}
+                disabled={!chatInput.trim() || sending}
                 size="sm"
                 className="absolute bottom-2.5 right-2.5 h-7 w-7 p-0 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg"
               >

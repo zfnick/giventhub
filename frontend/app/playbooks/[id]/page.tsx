@@ -302,7 +302,7 @@ export default function PlaybookPage() {
                 This blueprint visualizes the data flow and automation steps of the playbook.
               </p>
             </div>
-            <div className="h-[700px] w-full overflow-hidden bg-transparent">
+            <div className="h-[500px] w-full overflow-hidden bg-transparent">
               <PlaybookFlow graph={graph} loading={false} />
             </div>
 
@@ -319,7 +319,11 @@ export default function PlaybookPage() {
                     automatically provision the Google Workspace assets for you.
                   </CardDescription>
                 </div>
-                <AdaptPlaybookModal playbookTitle={playbook.title} />
+                <AdaptPlaybookModal
+                  playbookId={playbook.id}
+                  playbookTitle={playbook.title}
+                  sourceAssets={playbook.assets}
+                />
               </CardContent>
             </Card>
           </div>

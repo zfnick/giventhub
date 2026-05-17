@@ -2,12 +2,23 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Send, Loader2, Network, PanelRightClose, PanelRightOpen } from "lucide-react";
+import {
+  Send,
+  Loader2,
+  Network,
+  PanelRightClose,
+  PanelRightOpen,
+  Sparkles,
+  Target,
+  TrendingUp,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NavBar } from "@/components/NavBar";
 import { ChatMarkdown } from "@/components/ChatMarkdown";
 import { useAuth } from "@/lib/AuthContext";
+import { cn } from "@/lib/utils";
 import { ReactFlow, Background, Controls, useNodesState, useEdgesState, MarkerType } from "@xyflow/react";
 import type { Node, Edge } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -17,6 +28,10 @@ interface Message {
   role: "user" | "ai";
   content: string;
 }
+
+// `explore` traces relationships across events; `match` scores past
+// participants by track record — the outcome-scoring learning loop.
+type ChatMode = "explore" | "match";
 
 // ── Backend types ────────────────────────────────────────────────────────────
 type NodeType = "event" | "shared" | "people" | "tool";
@@ -41,6 +56,24 @@ interface EcosystemResponse {
   reply: string;
   nodes: BackendNode[];
   edges: BackendEdge[];
+}
+
+interface MatchCandidate {
+  name: string;
+  organization: string;
+  role: string;
+  fit_score: number;
+  engagement_score: number;
+  track_record: string;
+  evidence: string[];
+  reason: string;
+}
+
+interface MatchResponse {
+  status: string;
+  reply: string;
+  learned_from: number;
+  candidates: MatchCandidate[];
 }
 
 // ── Node + edge styling (frontend-only concern) ──────────────────────────────
@@ -140,17 +173,171 @@ function GraphSkeleton() {
   );
 }
 
+// ── Smart Match panel ─────────────────────────────────────────────────────────
+function ScoreBar({ label, value, icon: Icon }: { label: string; value: number; icon: LucideIcon }) {
+  const pct = Math.max(0, Math.min(100, value));
+  return (
+    <div className="flex-1">
+      <div className="flex items-center justify-between mb-1">
+        <span className="flex items-center gap-1 text-[11px] font-medium text-zinc-500">
+          <Icon className="h-3 w-3" />
+          {label}
+        </span>
+        <span className="text-[11px] font-semibold text-zinc-700 tabular-nums">{pct}</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-zinc-100 overflow-hidden">
+        <div className="h-full rounded-full bg-emerald-500 transition-[width] duration-500" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function CandidateCard({ c, rank }: { c: MatchCandidate; rank: number }) {
+  const initials = c.name
+    .split(/\s+/)
+    .map((w) => w[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+  const subtitle = [c.role, c.organization].filter(Boolean).join(" · ") || "Ecosystem participant";
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="h-10 w-10 shrink-0 rounded-full bg-zinc-900 text-white flex items-center justify-center text-xs font-bold">
+          {initials || "?"}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold text-zinc-900 text-sm truncate">{c.name}</h3>
+            <span className="ml-auto shrink-0 text-[11px] font-bold text-zinc-300">#{rank}</span>
+          </div>
+          <p className="text-xs text-zinc-500 truncate">{subtitle}</p>
+        </div>
+      </div>
+
+      <div className="mt-3.5 flex gap-3">
+        <ScoreBar label="Fit" value={c.fit_score} icon={Target} />
+        <ScoreBar label="Track record" value={c.engagement_score} icon={TrendingUp} />
+      </div>
+
+      {c.track_record && (
+        <p className="mt-3 text-xs text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-lg px-2.5 py-1.5">
+          {c.track_record}
+        </p>
+      )}
+      {c.reason && <p className="mt-2 text-xs leading-relaxed text-zinc-600">{c.reason}</p>}
+
+      {c.evidence.length > 0 && (
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          {c.evidence.map((e, i) => (
+            <span
+              key={i}
+              className="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-2 py-0.5 text-[10.5px] font-medium text-zinc-600"
+            >
+              <Network className="h-2.5 w-2.5" />
+              {e}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MatchSkeleton() {
+  return (
+    <div className="flex-1 overflow-hidden bg-zinc-50">
+      <div className="p-4 space-y-3">
+        {[0, 1, 2].map((i) => (
+          <div
+            key={i}
+            className="rounded-xl border border-zinc-200 bg-white p-4 animate-pulse"
+            style={{ animationDelay: `${i * 140}ms` }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-zinc-200" />
+              <div className="flex-1 space-y-2">
+                <div className="h-3 w-1/2 rounded bg-zinc-200" />
+                <div className="h-2.5 w-1/3 rounded bg-zinc-100" />
+              </div>
+            </div>
+            <div className="mt-4 flex gap-3">
+              <div className="h-1.5 flex-1 rounded-full bg-zinc-100" />
+              <div className="h-1.5 flex-1 rounded-full bg-zinc-100" />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-center gap-2 text-xs font-medium text-zinc-400">
+        <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:0ms]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:150ms]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:300ms]" />
+        Scoring past engagements…
+      </div>
+    </div>
+  );
+}
+
+function MatchPanel({
+  candidates,
+  learnedFrom,
+  hasRun,
+}: {
+  candidates: MatchCandidate[];
+  learnedFrom: number;
+  hasRun: boolean;
+}) {
+  if (!hasRun || candidates.length === 0) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center text-zinc-400 gap-4 bg-zinc-50">
+        <div className="h-16 w-16 rounded-2xl bg-emerald-50 flex items-center justify-center">
+          <Sparkles className="h-8 w-8 text-emerald-400" />
+        </div>
+        <div className="text-center max-w-xs">
+          <p className="text-sm font-medium text-zinc-500">Smart Match</p>
+          <p className="text-xs text-zinc-400 mt-1">
+            Describe who you need. The AI scores past participants by their track record across
+            every engagement on the platform.
+          </p>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex-1 flex flex-col bg-zinc-50 overflow-hidden">
+      <div className="px-6 py-3.5 border-b bg-white flex items-center gap-2.5 shrink-0">
+        <div className="h-8 w-8 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
+          <Sparkles className="h-4 w-4 text-emerald-600" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-zinc-900">Smart Match results</p>
+          <p className="text-xs text-zinc-500">
+            Scored against {learnedFrom} past engagement{learnedFrom === 1 ? "" : "s"} in the ecosystem
+          </p>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {candidates.map((c, i) => (
+          <CandidateCard key={`${c.name}-${i}`} c={c} rank={i + 1} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function ChatPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  const [chatMode, setChatMode] = useState<ChatMode>("explore");
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "ai",
       content:
-        "Hi! I can help you discover connections between events in the ecosystem. Try asking something like:\n\n**\"How does the Google GenAI Hackathon connect to the Accelerator Demo Day?\"**",
+        "Hi! I map relationships across the ecosystem.\n\n**Connections** traces how events link together. **Smart Match** scores past participants by track record to recommend mentors, sponsors, and partners for your next programme.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -158,6 +345,11 @@ export default function ChatPage() {
   const [showGraph, setShowGraph] = useState(false);
   const [graphKey, setGraphKey] = useState(0);
   const [chatOpen, setChatOpen] = useState(true);
+
+  // Smart Match state
+  const [candidates, setCandidates] = useState<MatchCandidate[]>([]);
+  const [learnedFrom, setLearnedFrom] = useState(0);
+  const [matchHasRun, setMatchHasRun] = useState(false);
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -172,41 +364,58 @@ export default function ChatPage() {
 
   const sendMessage = async () => {
     const text = input.trim();
-    if (!text || !user) return;
+    if (!text || !user || thinking) return;
 
     setInput("");
     const nextHistory = [...messages, { role: "user" as const, content: text }];
     setMessages(nextHistory);
     setThinking(true);
-    setShowGraph(false);
+
+    const apiHistory = nextHistory.map((m) => ({
+      role: m.role === "ai" ? ("ai" as const) : ("user" as const),
+      text: m.content,
+    }));
 
     try {
       const idToken = await user.getIdToken();
-      const res = await fetch(`${BACKEND_URL}/api/chat/ecosystem`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          query: text,
-          history: nextHistory.map((m) => ({
-            role: m.role === "ai" ? "ai" : "user",
-            text: m.content,
-          })),
-        }),
-      });
 
-      if (!res.ok) throw new Error(`Backend returned ${res.status}`);
-      const data: EcosystemResponse = await res.json();
+      if (chatMode === "match") {
+        const res = await fetch(`${BACKEND_URL}/api/match/recommend`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({ query: text, role: "any", history: apiHistory }),
+        });
+        if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+        const data: MatchResponse = await res.json();
 
-      setMessages((m) => [...m, { role: "ai", content: data.reply || "(no reply)" }]);
-      setNodes(data.nodes.map(styleNode));
-      setEdges(data.edges.map(styleEdge));
-      setGraphKey((k) => k + 1);
-      setShowGraph(data.nodes.length > 0);
+        setMessages((m) => [...m, { role: "ai", content: data.reply || "(no reply)" }]);
+        setCandidates(data.candidates);
+        setLearnedFrom(data.learned_from);
+        setMatchHasRun(true);
+      } else {
+        setShowGraph(false);
+        const res = await fetch(`${BACKEND_URL}/api/chat/ecosystem`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({ query: text, history: apiHistory }),
+        });
+        if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+        const data: EcosystemResponse = await res.json();
+
+        setMessages((m) => [...m, { role: "ai", content: data.reply || "(no reply)" }]);
+        setNodes(data.nodes.map(styleNode));
+        setEdges(data.edges.map(styleEdge));
+        setGraphKey((k) => k + 1);
+        setShowGraph(data.nodes.length > 0);
+      }
     } catch (err) {
-      console.error("Ecosystem chat failed:", err);
+      console.error("Chat request failed:", err);
       setMessages((m) => [
         ...m,
         {
@@ -231,6 +440,11 @@ export default function ChatPage() {
     );
   }
 
+  const placeholder =
+    chatMode === "match"
+      ? "Who should mentor my AI hackathon?"
+      : "How do these two events connect?";
+
   return (
     <div className="h-screen bg-zinc-50 flex flex-col overflow-hidden">
       <NavBar />
@@ -243,21 +457,47 @@ export default function ChatPage() {
           }`}
         >
           {/* Header — pinned, never scrolls */}
-          <div className="px-6 py-4 border-b flex items-start justify-between gap-2 shrink-0 bg-white">
-            <div className="min-w-0">
-              <h1 className="font-semibold text-zinc-900">Explore Connections</h1>
-              <p className="text-xs text-zinc-500 mt-0.5">
-                Ask about event relationships and see the knowledge graph.
-              </p>
+          <div className="px-6 py-4 border-b shrink-0 bg-white">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <h1 className="font-semibold text-zinc-900">Ecosystem Intelligence</h1>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Trace relationships and score reusable connections.
+                </p>
+              </div>
+              <button
+                onClick={() => setChatOpen(false)}
+                className="hidden lg:inline-flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 transition-colors shrink-0"
+                title="Collapse chat"
+                aria-label="Collapse chat"
+              >
+                <PanelRightClose className="h-4 w-4" />
+              </button>
             </div>
-            <button
-              onClick={() => setChatOpen(false)}
-              className="hidden lg:inline-flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 transition-colors shrink-0"
-              title="Collapse chat"
-              aria-label="Collapse chat"
-            >
-              <PanelRightClose className="h-4 w-4" />
-            </button>
+
+            {/* Mode toggle */}
+            <div className="mt-3 inline-flex rounded-lg bg-zinc-100 p-0.5">
+              {(
+                [
+                  { id: "explore" as ChatMode, label: "Connections", icon: Network },
+                  { id: "match" as ChatMode, label: "Smart Match", icon: Sparkles },
+                ]
+              ).map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => setChatMode(m.id)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
+                    chatMode === m.id
+                      ? "bg-white text-zinc-900 shadow-sm"
+                      : "text-zinc-500 hover:text-zinc-700",
+                  )}
+                >
+                  <m.icon className="h-3.5 w-3.5" />
+                  {m.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Messages — the only scrollable region */}
@@ -316,7 +556,7 @@ export default function ChatPage() {
               <Input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="How do these two events connect?"
+                placeholder={placeholder}
                 className="flex-1 text-sm"
                 disabled={thinking}
               />
@@ -336,7 +576,7 @@ export default function ChatPage() {
           </div>
         </div>
 
-        {/* ── Graph panel (left) ───────────────────────────────────────── */}
+        {/* ── Result panel (left) ──────────────────────────────────────── */}
         <div className="flex-1 flex-col hidden lg:flex relative">
           {!chatOpen && (
             <button
@@ -347,7 +587,14 @@ export default function ChatPage() {
               Chat
             </button>
           )}
-          {thinking ? (
+
+          {chatMode === "match" ? (
+            thinking ? (
+              <MatchSkeleton />
+            ) : (
+              <MatchPanel candidates={candidates} learnedFrom={learnedFrom} hasRun={matchHasRun} />
+            )
+          ) : thinking ? (
             <GraphSkeleton />
           ) : showGraph ? (
             <ReactFlow

@@ -40,6 +40,7 @@ function ReviewPlaybookContent() {
   const timing = (searchParams.get("timing") ?? "past") as "past" | "upcoming";
   const [isPublic, setIsPublic] = useState(true);
   const [isPushing, setIsPushing] = useState(false);
+  const [title, setTitle] = useState("Stanford AI Demo Day 2026");
   const [description, setDescription] = useState(
     "A premier showcase of student-led AI startups from Stanford. Includes registration flow, judge scoring rubric, and presentation schedule."
   );
@@ -51,7 +52,6 @@ function ReviewPlaybookContent() {
   // Dynamic knowledge tree (draft-mode — not yet committed)
   const [graph, setGraph] = useState<PlaybookGraphData | null>(null);
   const [graphLoading, setGraphLoading] = useState(true);
-  const draftTitle = "Stanford AI Demo Day 2026";
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -60,7 +60,7 @@ function ReviewPlaybookContent() {
           method: "POST",
           json: {
             draft: {
-              title: draftTitle,
+              title,
               description,
               category: "Hackathon",
               tags,
@@ -92,31 +92,71 @@ function ReviewPlaybookContent() {
   // Chatbot
   const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
   const [chatInput, setChatInput] = useState("");
+  const [sending, setSending] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, sending]);
 
-  const sendMessage = (overrideText?: string) => {
+  const sendMessage = async (overrideText?: string, fileName?: string) => {
     const text = (overrideText ?? chatInput).trim();
-    if (!text) return;
+    if (!text || sending) return;
     setChatInput("");
+    // Capture history BEFORE appending — the backend appends the message itself.
+    const history = messages.slice(-6);
     setMessages((prev) => [...prev, { role: "user", text }]);
+    setSending(true);
 
-    setTimeout(() => {
-      const reply = text.toLowerCase().includes("drive.google.com")
-        ? "Got it — I'm pulling data from that Drive link now. I'll update the knowledge map once I'm done."
-        : "Noted! I've added that to the playbook. Anything else that's missing?";
+    try {
+      const res = await apiFetch(user, "/api/chat/review", {
+        method: "POST",
+        json: {
+          message: text,
+          history,
+          file_name: fileName ?? null,
+          current: {
+            title,
+            description,
+            tags,
+            visibility: isPublic ? "public" : "private",
+          },
+        },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      // Apply any field edits the AI made to the live form state.
+      const updates = data?.updates ?? {};
+      if (typeof updates.title === "string") setTitle(updates.title);
+      if (typeof updates.description === "string") {
+        setDescription(updates.description.slice(0, 350));
+      }
+      if (Array.isArray(updates.tags)) setTags(updates.tags);
+      if (updates.visibility === "public" || updates.visibility === "private") {
+        setIsPublic(updates.visibility === "public");
+      }
+
+      const reply = (data?.reply ?? "").trim() ||
+        "Noted! I've added that to the playbook.";
       setMessages((prev) => [...prev, { role: "ai", text: reply }]);
-    }, 800);
+    } catch (err) {
+      console.error("Review chat error:", err);
+      setMessages((prev) => [...prev, {
+        role: "ai",
+        text: "I couldn't reach the planner just now — give it another try in a moment.",
+      }]);
+    } finally {
+      setSending(false);
+    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    sendMessage(`I've uploaded a file: ${file.name}`);
+    sendMessage(`I've uploaded a file: ${file.name}`, file.name);
+    e.target.value = "";
   };
 
   const handleBack = () => {
@@ -141,7 +181,7 @@ function ReviewPlaybookContent() {
           Authorization: `Bearer ${idToken}`,
         },
         body: JSON.stringify({
-          title: "Stanford AI Demo Day 2026",
+          title,
           description,
           is_public: isPublic,
           commit_message: "Initial save",
@@ -217,7 +257,8 @@ function ReviewPlaybookContent() {
                     </Label>
                     <Input
                       id="title"
-                      defaultValue="Stanford AI Demo Day 2026"
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
                       className="h-11 font-medium bg-zinc-50 border-zinc-200 focus-visible:ring-zinc-900 rounded-xl"
                       placeholder="e.g. Stanford AI Demo Day 2026"
                     />
@@ -385,6 +426,18 @@ function ReviewPlaybookContent() {
                     </div>
                   </div>
                 ))}
+                {sending && (
+                  <div className="flex gap-3 items-start">
+                    <div className="flex-shrink-0 h-8 w-8 rounded-xl flex items-center justify-center text-white shadow-sm bg-black">
+                      <Bot className="h-4 w-4" />
+                    </div>
+                    <div className="px-4 py-3.5 rounded-2xl bg-white border border-zinc-100 shadow-sm flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:-0.3s]" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:-0.15s]" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce" />
+                    </div>
+                  </div>
+                )}
                 <div ref={chatEndRef} />
               </div>
 
@@ -401,20 +454,22 @@ function ReviewPlaybookContent() {
                         sendMessage();
                       }
                     }}
-                    className="min-h-[100px] w-full bg-zinc-50 border-zinc-200 focus-visible:ring-zinc-900 rounded-2xl p-4 pr-12 text-sm leading-relaxed resize-none transition-all group-hover:border-zinc-300"
+                    disabled={sending}
+                    className="min-h-[100px] w-full bg-zinc-50 border-zinc-200 focus-visible:ring-zinc-900 rounded-2xl p-4 pr-12 text-sm leading-relaxed resize-none transition-all group-hover:border-zinc-300 disabled:opacity-60"
                   />
                   <div className="absolute bottom-3 right-3 flex gap-2">
                     <button
                       title="Upload a file"
                       onClick={() => fileInputRef.current?.click()}
-                      className="h-8 w-8 flex items-center justify-center rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-500 transition-colors shadow-sm"
+                      disabled={sending}
+                      className="h-8 w-8 flex items-center justify-center rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-500 transition-colors shadow-sm disabled:opacity-40"
                     >
                       <Paperclip className="h-4 w-4" />
                     </button>
                     <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} />
                     <Button
                       onClick={() => sendMessage()}
-                      disabled={!chatInput.trim()}
+                      disabled={!chatInput.trim() || sending}
                       size="sm"
                       className="h-8 w-8 p-0 bg-black hover:bg-zinc-800 text-white rounded-lg shadow-md"
                     >
@@ -425,13 +480,15 @@ function ReviewPlaybookContent() {
                 <div className="mt-3 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
                   <button
                     onClick={() => sendMessage("What sponsors are missing?")}
-                    className="whitespace-nowrap px-3 py-1.5 rounded-full border border-zinc-200 bg-zinc-50 text-[11px] font-bold text-zinc-600 hover:bg-zinc-100 hover:border-zinc-300 transition-all shadow-sm"
+                    disabled={sending}
+                    className="whitespace-nowrap px-3 py-1.5 rounded-full border border-zinc-200 bg-zinc-50 text-[11px] font-bold text-zinc-600 hover:bg-zinc-100 hover:border-zinc-300 transition-all shadow-sm disabled:opacity-40"
                   >
                     Find sponsors
                   </button>
                   <button
                     onClick={() => sendMessage("Generate a judging rubric")}
-                    className="whitespace-nowrap px-3 py-1.5 rounded-full border border-zinc-200 bg-zinc-50 text-[11px] font-bold text-zinc-600 hover:bg-zinc-100 hover:border-zinc-300 transition-all shadow-sm"
+                    disabled={sending}
+                    className="whitespace-nowrap px-3 py-1.5 rounded-full border border-zinc-200 bg-zinc-50 text-[11px] font-bold text-zinc-600 hover:bg-zinc-100 hover:border-zinc-300 transition-all shadow-sm disabled:opacity-40"
                   >
                     Create rubric
                   </button>

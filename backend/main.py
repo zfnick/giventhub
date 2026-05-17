@@ -15,11 +15,14 @@ verbatim to the friend's AI stack.
 """
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 import schemas
 from ai_client import AIStackClient, AIStackUnavailable
@@ -43,7 +46,9 @@ async def lifespan(app: FastAPI):
         project_id=settings.gcp_project,
         database=settings.firestore_database,
     )
-    app.state.ai = AIStackClient(base_url=settings.ai_service_url)
+    # Adapt runs ~5 sequential Workspace creates with content — easily blows
+    # past the 60s default. Give the ADK agent room to finish.
+    app.state.ai = AIStackClient(base_url=settings.ai_service_url, timeout_seconds=240.0)
     app.state.gemini = GeminiClient(
         project=settings.gcp_project,
         location=settings.gcp_location,
@@ -61,6 +66,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "https://frontend-1009420638811.asia-southeast1.run.app",
+        "https://frontend-mz2tiihnsa-as.a.run.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -131,45 +138,330 @@ def _scan_stub(event_name: str) -> schemas.ScanResponse:
 
 # ── /api/adapt ───────────────────────────────────────────────────────────────
 
+def _build_adapt_prompt(source: schemas.Playbook, customization: str) -> str:
+    """Compose the ADK agent prompt for a Smart Fork.
+
+    The agent has create-with-content tools (create_google_doc(content=…),
+    create_google_form(questions_json=…), create_google_sheet(headers_json=…)),
+    so we feed it the source's full structure + the customization and tell it
+    to author each asset's content end-to-end. The previous prompt just said
+    "clone the Drive folder", which the agent interpreted as making an empty
+    folder + empty files (there is no source Drive folder to copy from — the
+    template lives in Firestore).
+    """
+    ctx = source.context
+
+    asset_lines = "\n".join(
+        f"  - {a.name} ({a.type})" for a in source.assets
+    ) or (
+        "  (none listed in the source — infer the standard "
+        f"set for a '{source.category or 'event'}')"
+    )
+
+    feature_lines = "\n".join(f"  - {f}" for f in source.features) or "  (none listed)"
+
+    # Roles roster — dedup while keeping source order so the agent can pre-build
+    # appropriate sheet columns / form questions for the people involved.
+    seen: set[str] = set()
+    unique_roles: list[str] = []
+    for p in source.participants:
+        if p.role and p.role not in seen:
+            seen.add(p.role)
+            unique_roles.append(p.role)
+    role_lines = "\n".join(f"  - {r}" for r in unique_roles) or "  (none listed)"
+
+    customization_block = (customization or "").strip() or (
+        "(no specific customization — adapt the playbook for a clean fork "
+        "but still personalize names/titles to feel new)"
+    )
+
+    return (
+        "You are forking a Google Workspace event playbook into the organizer's "
+        "own Drive. The source playbook lives in our database — it is a "
+        "*template description*, NOT a set of existing Drive files. You must "
+        "CREATE every asset fresh, with real content authored to match the "
+        "customization request.\n\n"
+        "SOURCE PLAYBOOK\n"
+        f"  - Title: {source.title}\n"
+        f"  - Category: {source.category or 'event'}\n"
+        f"  - Typical attendees: {source.attendees or 'unspecified'}\n"
+        f"  - Duration: {source.duration or 'unspecified'}\n"
+        f"  - Description: {source.description or '(none)'}\n"
+        f"  - Challenge / theme: {ctx.challenge or '(none)'}\n"
+        f"  - Target audience: {ctx.targetAudience or '(none)'}\n"
+        f"  - Venue notes: {ctx.venue or '(none)'}\n"
+        f"  - Tech stack notes: {ctx.techStack or '(none)'}\n\n"
+        "  Assets to recreate, each as a fresh Workspace file:\n"
+        f"{asset_lines}\n\n"
+        "  Features the assets must support:\n"
+        f"{feature_lines}\n\n"
+        "  Roles to plan for (use for sheet columns / form options / doc sections):\n"
+        f"{role_lines}\n\n"
+        "CUSTOMIZATION REQUEST from the organizer:\n"
+        f'"""\n{customization_block}\n"""\n\n'
+        "TASK — execute every step, do not just plan. Pass execute=True on every tool call.\n\n"
+        "1. Create ONE Google Drive folder for this customized event via drive_agent. "
+        "Name it so the customization is visible (incorporate the new audience, "
+        "theme, or location). Capture the folder's resource_id.\n\n"
+        "2. For EACH asset listed above, create a fresh file inside that folder "
+        "by passing folder_id to the create call:\n"
+        "   - 'Google Forms' → create_google_form with questions_json tailored to "
+        "the request (e.g. high-school registration asks grade/school, not "
+        "generic 'What are you building?').\n"
+        "   - 'Google Sheets' → create_google_sheet with headers_json that "
+        "matches the asset's purpose (roster columns, judging criteria, etc.).\n"
+        "   - 'Google Docs' → create_google_doc with a non-empty `content` "
+        "argument holding the full body text (run-of-show, rulebook, rubric — "
+        "real sentences, not placeholders).\n"
+        "   - 'Google Slides' → create_google_slide_deck, then update_google_slide_deck "
+        "to populate slides with titled content.\n\n"
+        "3. Every file MUST contain real, customization-aware content. The user "
+        "will open each file and read it — empty files or generic placeholder "
+        "text (\"TBD\", \"Sample question\", \"Lorem ipsum\") count as a failure. "
+        "Tailor names, questions, columns, and prose to the customization request "
+        "and the source's category/audience.\n\n"
+        "4. Return the Drive folder URL as workspaceUrl in your final summary.\n"
+    )
+
+
 @app.post("/api/adapt", response_model=schemas.AdaptResponse)
 async def adapt_playbook(
     req: schemas.AdaptRequest,
-    user: AuthedUser = Depends(get_current_user_optional),
+    user: AuthedUser = Depends(get_current_user),
 ) -> schemas.AdaptResponse:
     """The Smart Fork — clone a playbook into the user's Workspace, customized.
 
-    This is the demo headline. The friend's AI stack does the heavy lifting
-    (read source playbook → clone Drive folder → tailor Docs/Forms/Sheets to
-    the user's prompt → return a workspace URL).
+    Two-phase so the user always sees a result:
+      1. Persist a fork in Firestore against this user (always — Firestore is
+         our source of truth, so My Playbooks reflects reality regardless of
+         whether the AI service is reachable).
+      2. If we have a Google OAuth token AND the AI service is wired up,
+         attempt to provision the real Workspace assets and store the live
+         Drive URL on the fork.
+
+    The frontend gets the fork's id back so it can navigate the user there.
     """
-    if app.state.ai.configured and req.google_access_token:
+    # ── 1. Resolve the source playbook ─────────────────────────────────────
+    source: schemas.Playbook | None = None
+    if req.playbook_id:
+        source = app.state.db.get_playbook(req.playbook_id)
+    if source is None:
+        # Backwards-compat — older clients only sent the title.
+        for p in app.state.db.list_public_playbooks(limit=200):
+            if p.title == req.playbookTitle:
+                source = p
+                break
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source playbook not found",
+        )
+
+    # ── 2. Persist the fork in Firestore ───────────────────────────────────
+    # Private by default — it's the user's working copy. They can publish
+    # later from the playbook detail page.
+    fork = app.state.db.create_playbook(
+        author_uid=user.uid,
+        author_name=user.name or user.email or "Anonymous",
+        title=source.title,
+        description=req.prompt.strip() or source.description,
+        is_public=False,
+        tags=source.tags,
+        forked_from=source.id,
+        timing="upcoming",
+        extra={
+            "attendees": source.attendees,
+            "duration": source.duration,
+            "category": source.category,
+            "stats": "Forked",
+            "context": source.context.model_dump(),
+            "assets": [a.model_dump() for a in source.assets],
+            "participants": [p.model_dump() for p in source.participants],
+            "features": source.features,
+        },
+    )
+
+    # ── 3. Best-effort: provision the real Workspace assets ────────────────
+    workspace_url = ""
+    workspace_drafts: list[dict] = []
+    message = f"Forked '{source.title}' into your playbooks."
+
+    if not req.google_access_token:
+        message += " Sign in with Google again to provision the Workspace assets."
+    elif not app.state.ai.configured:
+        message += " AI service not configured — workspace assets were not provisioned."
+    else:
+        stack_prompt = _build_adapt_prompt(source, req.prompt)
         try:
-            stack_prompt = (
-                f"Fork the '{req.playbookTitle}' playbook for this user. "
-                f"Customization request: {req.prompt}. "
-                "Clone the Drive folder, copy templates (Docs, Sheets, Forms), "
-                "and tailor copy to the request. Return workspaceUrl pointing at "
-                "the cloned root folder."
-            )
             payload = await app.state.ai.invoke(
                 endpoint="adapt",
                 oauth_token=req.google_access_token,
                 prompt=stack_prompt,
-                extra={"playbookId": req.playbook_id, "playbookTitle": req.playbookTitle},
+                extra={"playbookId": source.id, "playbookTitle": source.title},
             )
-            return schemas.AdaptResponse(
-                status="success",
-                message=f"Adapted {req.playbookTitle}",
-                workspaceUrl=payload.get("workspaceUrl", payload.get("workspace_url", "")),
-                workspace_drafts=payload.get("workspace_drafts", []),
-            )
+            workspace_url = payload.get("workspaceUrl") or payload.get("workspace_url", "")
+            workspace_drafts = payload.get("workspace_drafts", []) or []
+            if workspace_url:
+                # Stamp the live Drive URL onto the fork so the playbook
+                # detail page can deep-link the user back to their workspace.
+                app.state.db.playbooks.document(fork.id).update({
+                    "workspace_url": workspace_url,
+                    "workspace_drafts": workspace_drafts,
+                })
+                message = f"Forked '{source.title}' and provisioned your Google Workspace."
+            else:
+                message += " AI ran but did not return a workspace URL."
         except AIStackUnavailable as exc:
-            log.warning("adapt: falling back to stub (%s)", exc)
+            log.warning("adapt: AI service unavailable (%s)", exc)
+            message += " Workspace provisioning failed — you can retry from the playbook page."
 
     return schemas.AdaptResponse(
         status="success",
-        message=f"(stub) Adapted {req.playbookTitle}",
-        workspaceUrl="https://drive.google.com/drive/folders/mock-folder-id",
+        message=message,
+        playbook_id=fork.id,
+        workspaceUrl=workspace_url,
+        workspace_drafts=workspace_drafts,
+    )
+
+
+# ── /api/adapt/stream — real-time progress for the Smart Fork ────────────────
+
+@app.post("/api/adapt/stream")
+async def adapt_playbook_stream(
+    req: schemas.AdaptRequest,
+    user: AuthedUser = Depends(get_current_user),
+) -> StreamingResponse:
+    """Streaming variant of /api/adapt.
+
+    Emits NDJSON to the frontend so it can render a live progress feed:
+      - `{type: "fork_created", playbook_id}` first, so the UI knows where to
+        navigate even if Workspace provisioning later fails.
+      - then every tool_call / tool_result the ADK agent produces (e.g.
+        `create_drive_folder`, `create_google_doc`) as it happens.
+      - finally `{type: "final", workspaceUrl}` after the agent settles.
+
+    All the same persistence rules as /api/adapt apply — the fork is always
+    saved in Firestore, Workspace provisioning is best-effort.
+    """
+    # ── 1. Resolve the source playbook ─────────────────────────────────────
+    source: schemas.Playbook | None = None
+    if req.playbook_id:
+        source = app.state.db.get_playbook(req.playbook_id)
+    if source is None:
+        for p in app.state.db.list_public_playbooks(limit=200):
+            if p.title == req.playbookTitle:
+                source = p
+                break
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source playbook not found",
+        )
+
+    # ── 2. Persist the fork in Firestore (always) ──────────────────────────
+    fork = app.state.db.create_playbook(
+        author_uid=user.uid,
+        author_name=user.name or user.email or "Anonymous",
+        title=source.title,
+        description=req.prompt.strip() or source.description,
+        is_public=False,
+        tags=source.tags,
+        forked_from=source.id,
+        timing="upcoming",
+        extra={
+            "attendees": source.attendees,
+            "duration": source.duration,
+            "category": source.category,
+            "stats": "Forked",
+            "context": source.context.model_dump(),
+            "assets": [a.model_dump() for a in source.assets],
+            "participants": [p.model_dump() for p in source.participants],
+            "features": source.features,
+        },
+    )
+
+    # Snapshot the values needed inside the generator — `req` and `source`
+    # are still in scope, but capturing keeps the closure tight.
+    source_id = source.id
+    source_title = source.title
+    fork_id = fork.id
+    google_token = req.google_access_token
+    stack_prompt = _build_adapt_prompt(source, req.prompt)
+    ai_configured = app.state.ai.configured
+    ai = app.state.ai
+    db = app.state.db
+
+    async def gen() -> AsyncIterator[bytes]:
+        def emit(obj: dict) -> bytes:
+            return (json.dumps(obj) + "\n").encode("utf-8")
+
+        # First chunk — the fork id, so the UI can navigate even on failure.
+        yield emit({"type": "fork_created", "playbook_id": fork_id, "title": source_title})
+
+        if not google_token:
+            yield emit({
+                "type": "skipped",
+                "reason": "Sign in with Google again to provision the Workspace assets.",
+            })
+            yield emit({"type": "final", "workspaceUrl": "", "playbook_id": fork_id})
+            return
+        if not ai_configured:
+            yield emit({
+                "type": "skipped",
+                "reason": "AI service not configured — workspace assets were not provisioned.",
+            })
+            yield emit({"type": "final", "workspaceUrl": "", "playbook_id": fork_id})
+            return
+
+        workspace_url = ""
+        drafts: list[dict] = []
+        try:
+            async for evt in ai.stream(
+                endpoint="adapt-stream",
+                oauth_token=google_token,
+                prompt=stack_prompt,
+                extra={"playbookId": source_id, "playbookTitle": source_title},
+            ):
+                if evt.get("type") == "final":
+                    workspace_url = evt.get("workspaceUrl") or ""
+                if evt.get("type") == "tool_result":
+                    drafts.append({
+                        "name": evt.get("name"),
+                        "title": evt.get("title"),
+                        "url": evt.get("url"),
+                    })
+                yield emit(evt)
+        except AIStackUnavailable as exc:
+            log.warning("adapt-stream: AI service unavailable (%s)", exc)
+            yield emit({
+                "type": "error",
+                "detail": "Workspace provisioning failed — you can retry from the playbook page.",
+            })
+            yield emit({"type": "final", "workspaceUrl": "", "playbook_id": fork_id})
+            return
+
+        # Stamp the live Drive URL onto the fork so the playbook detail page
+        # can deep-link the user back to their workspace.
+        if workspace_url:
+            try:
+                db.playbooks.document(fork_id).update({
+                    "workspace_url": workspace_url,
+                    "workspace_drafts": drafts,
+                })
+            except Exception:  # noqa: BLE001 — best-effort persistence
+                log.exception("adapt-stream: failed to stamp workspace_url on fork")
+
+        # Re-emit final with the fork id so the UI has both in one place.
+        yield emit({
+            "type": "final",
+            "workspaceUrl": workspace_url,
+            "playbook_id": fork_id,
+        })
+
+    return StreamingResponse(
+        gen(),
+        media_type="application/x-ndjson",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
     )
 
 
@@ -251,10 +543,14 @@ async def chat_event_architect(
     req: schemas.ArchitectChatRequest,
     user: AuthedUser = Depends(get_current_user_optional),
 ) -> schemas.ArchitectChatResponse:
-    reply = await app.state.gemini.architect_reply(req)
+    reply, updates = await app.state.gemini.architect_reply(req)
     if not reply:
         reply = "On it — refining the draft now."
-    return schemas.ArchitectChatResponse(status="success", reply=reply)
+    return schemas.ArchitectChatResponse(
+        status="success",
+        reply=reply,
+        updates=schemas.ArchitectFieldUpdates(**updates),
+    )
 
 
 # ── Chat: /onboarding/review — "Anything I missed?" ──────────────────────────
@@ -264,10 +560,14 @@ async def chat_review(
     req: schemas.ReviewChatRequest,
     user: AuthedUser = Depends(get_current_user_optional),
 ) -> schemas.ReviewChatResponse:
-    reply = await app.state.gemini.review_reply(req)
+    reply, updates = await app.state.gemini.review_reply(req)
     if not reply:
         reply = "Noted! I've added that to the playbook."
-    return schemas.ReviewChatResponse(status="success", reply=reply)
+    return schemas.ReviewChatResponse(
+        status="success",
+        reply=reply,
+        updates=schemas.ReviewFieldUpdates(**updates),
+    )
 
 
 # ── Chat: /chat ecosystem graph ──────────────────────────────────────────────
@@ -292,6 +592,35 @@ async def chat_ecosystem(
         reply=reply,
         nodes=nodes,
         edges=edges,
+    )
+
+
+# ── Smart Match: outcome-scoring learning loop ───────────────────────────────
+
+@app.post("/api/match/recommend", response_model=schemas.MatchResponse)
+async def match_recommend(
+    req: schemas.MatchRequest,
+    user: AuthedUser = Depends(get_current_user),
+) -> schemas.MatchResponse:
+    """Recommend people for a new need, scored against past engagements.
+
+    Every public playbook is treated as a past engagement record. The scorer
+    mines that history so recommendations improve as more engagements
+    accumulate — the platform's learning loop.
+    """
+    playbooks = app.state.db.list_public_playbooks(limit=200)
+    reply, candidates = await app.state.gemini.recommend_matches(req, playbooks)
+    if not reply:
+        reply = (
+            "Here are the strongest matches from past engagement history."
+            if candidates
+            else "I couldn't find enough past engagement data to score a match yet."
+        )
+    return schemas.MatchResponse(
+        status="success",
+        reply=reply,
+        learned_from=len(playbooks),
+        candidates=candidates,
     )
 
 

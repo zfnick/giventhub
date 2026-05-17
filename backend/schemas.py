@@ -59,7 +59,12 @@ class AdaptRequest(BaseModel):
 
 
 class AdaptResponse(StatusEnvelope):
-    workspaceUrl: str
+    # ID of the newly-created fork in Firestore — frontend navigates here so
+    # the user lands on their adapted copy in My Playbooks.
+    playbook_id: str = ""
+    # Live Drive folder URL when the AI service provisioned assets; "" when
+    # the AI service was unreachable / no Workspace token was supplied.
+    workspaceUrl: str = ""
     workspace_drafts: list[dict[str, Any]] = []
 
 
@@ -140,7 +145,12 @@ class ChatMessage(BaseModel):
 
 
 class ArchitectContext(BaseModel):
-    """Minimal slice of `/event/new` state the AI needs to reason."""
+    """Minimal slice of `/event/new` state the AI needs to reason.
+
+    `available_*` lists are the canonical catalogues the form lets the user
+    pick from. The AI is required to pick subsets of these — never invent —
+    so we forward whatever the frontend currently shows.
+    """
 
     step: Literal["mode", "playbook", "context", "similar", "plan"] = "mode"
     mode: Literal["playbook", "scratch"] | None = None
@@ -155,6 +165,14 @@ class ArchitectContext(BaseModel):
     locked_venue: str = ""
     locked_outreach: list[str] = []
     enabled_tools: list[str] = []
+    # Catalogues the AI is allowed to draw from — populated by the frontend
+    # from its mock data so backend stays decoupled from the UI lists.
+    available_formats: list[str] = []
+    available_mentors: list[str] = []
+    available_sponsors: list[str] = []
+    available_venues: list[str] = []
+    available_outreach: list[str] = []
+    available_tools: list[str] = []
 
 
 class ArchitectChatRequest(BaseModel):
@@ -163,9 +181,39 @@ class ArchitectChatRequest(BaseModel):
     context: ArchitectContext = ArchitectContext()
 
 
+class ArchitectFieldUpdates(BaseModel):
+    """Field-level edits the AI wants applied to the /event/new form.
+
+    Mirrors the `ReviewFieldUpdates` pattern — every field is optional and
+    only the ones the AI is actually changing are populated. The frontend
+    patches its local state with whatever is set.
+    """
+
+    event_name: str | None = None
+    event_date: str | None = None       # ISO YYYY-MM-DD
+    event_format: str | None = None
+    audience: str | None = None
+    goal: str | None = None
+    locked_mentors: list[str] | None = None
+    locked_sponsors: list[str] | None = None
+    locked_venue: str | None = None
+    locked_outreach: list[str] | None = None
+    enabled_tools: list[str] | None = None
+
+
 class ArchitectChatResponse(StatusEnvelope):
     reply: str
+    updates: ArchitectFieldUpdates = ArchitectFieldUpdates()
     suggestions: dict[str, Any] = {}
+
+
+class ReviewDraftState(BaseModel):
+    """Current `/onboarding/review` form state the AI is allowed to edit."""
+
+    title: str = ""
+    description: str = ""
+    tags: list[str] = []
+    visibility: Literal["public", "private"] = "public"
 
 
 class ReviewChatRequest(BaseModel):
@@ -173,10 +221,25 @@ class ReviewChatRequest(BaseModel):
     history: list[ChatMessage] = []
     playbook_id: str | None = None
     file_name: str | None = None
+    current: ReviewDraftState = ReviewDraftState()
+
+
+class ReviewFieldUpdates(BaseModel):
+    """Field-level edits the AI wants applied to the review form.
+
+    Every field is optional — only the ones the user asked to change are
+    populated. The frontend patches its form state with whatever is set.
+    """
+
+    title: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None
+    visibility: Literal["public", "private"] | None = None
 
 
 class ReviewChatResponse(StatusEnvelope):
     reply: str
+    updates: ReviewFieldUpdates = ReviewFieldUpdates()
     extracted_assets: list[PlaybookAsset] = []
 
 
@@ -204,6 +267,39 @@ class EcosystemChatResponse(StatusEnvelope):
     reply: str
     nodes: list[GraphNode]
     edges: list[GraphEdge]
+
+
+# ── Smart Match (outcome-scoring learning loop) ──────────────────────────────
+
+class MatchRequest(BaseModel):
+    """A request for people recommendations, scored against past engagements."""
+
+    query: str
+    role: Literal["mentor", "sponsor", "judge", "speaker", "partner", "any"] = "any"
+    history: list[ChatMessage] = []
+
+
+class MatchCandidate(BaseModel):
+    """One scored recommendation.
+
+    Scores are derived from observed participation across the playbook
+    catalogue — never invented. `evidence` lists the playbooks backing them.
+    """
+
+    name: str
+    organization: str = ""
+    role: str = ""
+    fit_score: int = 0          # 0-100 — domain/role fit for this specific need
+    engagement_score: int = 0   # 0-100 — track record across past engagements
+    track_record: str = ""      # one-line summary of past engagement outcomes
+    evidence: list[str] = []    # playbook titles that back the scores
+    reason: str = ""            # why this candidate, grounded in evidence
+
+
+class MatchResponse(StatusEnvelope):
+    reply: str = ""
+    learned_from: int = 0       # number of past playbooks (engagements) scored
+    candidates: list[MatchCandidate] = []
 
 
 # ── Knowledge tree (PlaybookFlow graph) ──────────────────────────────────────
