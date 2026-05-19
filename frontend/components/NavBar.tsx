@@ -39,7 +39,7 @@ export function NavBar({ left, hideBorder, isFullWidth }: NavBarProps) {
           {left}
           <Link href="/" className="flex items-center">
             <Image
-              src="/logo.png"
+              src="/icon.png"
               alt="gieventhub logo"
               width={56}
               height={56}

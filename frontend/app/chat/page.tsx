@@ -117,7 +117,7 @@ function styleEdge(e: BackendEdge): Edge {
   };
 }
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8001";
 
 // ── Skeleton shown while the graph is being generated ─────────────────────────
 const SKELETON_NODES = [
@@ -452,9 +452,8 @@ export default function ChatPage() {
       <div className="w-full flex flex-row-reverse flex-1 min-h-0 overflow-hidden">
         {/* ── Chat panel (right) ───────────────────────────────────────── */}
         <div
-          className={`flex flex-col bg-white shrink-0 overflow-hidden transition-[width] duration-300 ${
-            chatOpen ? "w-full lg:w-[420px] border-l" : "w-full lg:w-0 lg:border-0"
-          }`}
+          className={`flex flex-col bg-white shrink-0 overflow-hidden transition-[width] duration-300 ${chatOpen ? "w-full lg:w-[420px] border-l" : "w-full lg:w-0 lg:border-0"
+            }`}
         >
           {/* Header — pinned, never scrolls */}
           <div className="px-6 py-4 border-b shrink-0 bg-white">
@@ -513,11 +512,10 @@ export default function ChatPage() {
                   </div>
                 )}
                 <div
-                  className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-                    msg.role === "user"
+                  className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${msg.role === "user"
                       ? "bg-zinc-900 text-white rounded-br-sm whitespace-pre-wrap"
                       : "bg-zinc-100 text-zinc-800 rounded-bl-sm"
-                  }`}
+                    }`}
                 >
                   {msg.role === "ai" ? (
                     <ChatMarkdown content={msg.content} />

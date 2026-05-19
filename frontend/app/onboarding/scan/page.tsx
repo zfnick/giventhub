@@ -238,7 +238,7 @@ function ScanWorkspaceContent() {
     const run = async () => {
       try {
         const start = Date.now();
-        const res = await fetch("http://localhost:8000/api/scan", {
+        const res = await fetch("http://localhost:8001/api/scan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -248,7 +248,7 @@ function ScanWorkspaceContent() {
             googleAccessToken,
           }),
         });
-        
+
         // Labor illusion: ensure the UI plays for at least 5.5 seconds 
         // to show the scanning animations properly before jumping.
         const elapsed = Date.now() - start;

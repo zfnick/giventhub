@@ -174,7 +174,7 @@ function ReviewPlaybookContent() {
     try {
       if (!user) throw new Error("Not signed in");
       const idToken = await user.getIdToken();
-      const res = await fetch("http://localhost:8000/api/commit", {
+      const res = await fetch("http://localhost:8001/api/commit", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

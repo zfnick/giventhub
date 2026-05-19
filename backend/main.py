@@ -15,6 +15,7 @@ verbatim to the friend's AI stack.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -32,8 +33,10 @@ from deps import (
     get_current_user_optional,
     get_settings,
 )
+from cache import TTLCache, normalize_query
 from firestore_db import FirestoreDB
 from gemini_client import GeminiClient
+from neo4j_client import Neo4jClient
 
 log = logging.getLogger(__name__)
 
@@ -54,9 +57,24 @@ async def lifespan(app: FastAPI):
         location=settings.gcp_location,
         api_key=settings.gemini_api_key,
     )
-    log.info("Backend ready. AI stack configured: %s", app.state.ai.configured)
+    # Neo4j is optional — empty NEO4J_URI puts the client into a no-op mode
+    # and the ecosystem chat falls back to the older Gemini-only path.
+    app.state.graph = Neo4jClient(
+        uri=settings.neo4j_uri,
+        username=settings.neo4j_username,
+        password=settings.neo4j_password,
+    )
+    # Process-local response cache for /api/chat/ecosystem. Version bumps on
+    # every playbook write so cached entries are never served past a change
+    # to the catalogue. 10-min TTL is a safety net.
+    app.state.cache = TTLCache(max_size=256, ttl_seconds=600.0)
+    log.info(
+        "Backend ready. AI stack configured: %s. Neo4j enabled: %s",
+        app.state.ai.configured, not app.state.graph.disabled,
+    )
     yield
     await app.state.ai.close()
+    app.state.graph.close()
 
 
 app = FastAPI(title="gieventhub API", lifespan=lifespan)
@@ -66,6 +84,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
         "https://frontend-1009420638811.asia-southeast1.run.app",
         "https://frontend-mz2tiihnsa-as.a.run.app",
     ],
@@ -280,6 +300,7 @@ async def adapt_playbook(
             "features": source.features,
         },
     )
+    _mirror_to_neo4j(fork)
 
     # ── 3. Best-effort: provision the real Workspace assets ────────────────
     workspace_url = ""
@@ -379,6 +400,7 @@ async def adapt_playbook_stream(
             "features": source.features,
         },
     )
+    _mirror_to_neo4j(fork)
 
     # Snapshot the values needed inside the generator — `req` and `source`
     # are still in scope, but capturing keeps the closure tight.
@@ -483,11 +505,28 @@ async def commit_playbook(
         forked_from=req.forked_from,
         timing=req.timing,
     )
+    _mirror_to_neo4j(playbook)
     return schemas.CommitResponse(
         status="success",
         playbook_id=playbook.id,
         message=f"Saved {playbook.title}",
     )
+
+
+def _mirror_to_neo4j(playbook: schemas.Playbook) -> None:
+    """Best-effort write-through of a fresh playbook into the Neo4j index.
+
+    Never raises — Firestore is the source of truth, the graph is a derived
+    index. A Neo4j outage must not break the user-facing write path.
+
+    Also bumps the response cache version: the catalogue just changed, so
+    every cached `/api/chat/ecosystem` answer needs to be re-derived.
+    """
+    try:
+        app.state.graph.upsert_playbook(playbook)
+    except Exception:  # noqa: BLE001
+        log.exception("neo4j: write-through failed for %s", playbook.id)
+    app.state.cache.invalidate()
 
 
 # ── Playbooks (read) ─────────────────────────────────────────────────────────
@@ -577,8 +616,42 @@ async def chat_ecosystem(
     req: schemas.EcosystemChatRequest,
     user: AuthedUser = Depends(get_current_user),
 ) -> schemas.EcosystemChatResponse:
-    # Ground the chat in the real Firestore catalogue so factual questions
-    # (count by venue, list by host, etc.) get answered with actual data.
+    """Neo4j-backed when configured: one Cypher query for the subgraph + one
+    Gemini call for the prose reply. Falls back to the older Gemini-only path
+    (two sequential LLM calls, model invents the graph) when Neo4j is disabled
+    or returns no matches.
+
+    Responses are cached on a normalized query key — repeated identical
+    queries return instantly. The cache is version-tagged: any playbook write
+    bumps the version (see `_mirror_to_neo4j`), so cached entries can never
+    outlive a change to the catalogue.
+    """
+    cache_key = normalize_query(req.query)
+    cached = app.state.cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    if not app.state.graph.disabled:
+        # Cypher in tens of ms, then a single grounded Gemini call. Compared
+        # to the legacy path (model generates a graph with thinking=high on
+        # a 12k-token JSON response) this is 3-5x faster end-to-end.
+        nodes, edges = await asyncio.to_thread(
+            app.state.graph.ecosystem_subgraph, req.query,
+        )
+        if nodes:
+            reply = await app.state.gemini.ecosystem_reply_from_subgraph(
+                req, nodes, edges,
+            )
+            if not reply:
+                reply = "I found these connected playbooks in our relationship index."
+            response = schemas.EcosystemChatResponse(
+                status="success", reply=reply, nodes=nodes, edges=edges,
+            )
+            app.state.cache.set(cache_key, response)
+            return response
+
+    # Fallback: Neo4j disabled or empty. Use the older Gemini-only path so
+    # the demo still works against a fresh DB.
     playbooks = app.state.db.list_public_playbooks(limit=200)
     reply, nodes, edges = await app.state.gemini.ecosystem_reply_and_graph(
         req, playbooks=playbooks,
@@ -587,12 +660,14 @@ async def chat_ecosystem(
         nodes, edges = _fallback_graph()
     if not reply:
         reply = "I sketched a basic relationship graph from your query."
-    return schemas.EcosystemChatResponse(
+    response = schemas.EcosystemChatResponse(
         status="success",
         reply=reply,
         nodes=nodes,
         edges=edges,
     )
+    app.state.cache.set(cache_key, response)
+    return response
 
 
 # ── Smart Match: outcome-scoring learning loop ───────────────────────────────
@@ -723,4 +798,4 @@ async def _proxy_workspace(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)

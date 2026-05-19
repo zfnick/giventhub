@@ -22,6 +22,9 @@ class Settings(BaseModel):
     auth_dev_bypass: bool
     firestore_database: str
     gemini_api_key: str
+    neo4j_uri: str
+    neo4j_username: str
+    neo4j_password: str
 
 
 @lru_cache(maxsize=1)
@@ -35,6 +38,11 @@ def get_settings() -> Settings:
         # When set, Gemini calls use the Developer API (AI Studio key) instead
         # of Vertex AI + ADC. Handy as a fallback when Vertex is rate-limited.
         gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
+        # Empty NEO4J_URI disables the Neo4j client — backend still runs, but
+        # the ecosystem chat falls back to the older Gemini-only graph path.
+        neo4j_uri=os.getenv("NEO4J_URI", ""),
+        neo4j_username=os.getenv("NEO4J_USERNAME", "neo4j"),
+        neo4j_password=os.getenv("NEO4J_PASSWORD", ""),
     )
 
 

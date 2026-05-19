@@ -111,7 +111,7 @@ export default function ExplorePage() {
       <NavBar />
 
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
-      <section className="relative overflow-hidden bg-white border-b border-zinc-200 flex items-center justify-center min-h-[500px] py-32">
+      <section className="h-[400px] relative overflow-hidden bg-white border-b border-zinc-200 flex items-center justify-center py-32">
         {/* Plasma-wave animated background */}
         <PlasmaWave
           colors={["#10b981", "#3b82f6"]}

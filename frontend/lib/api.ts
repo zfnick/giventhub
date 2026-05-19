@@ -1,6 +1,6 @@
 import { User } from "firebase/auth";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8001";
 
 /**
  * Fetch wrapper that auto-attaches a Firebase ID token when a user is provided.

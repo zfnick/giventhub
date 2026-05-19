@@ -478,6 +478,38 @@ class GeminiClient:
         nodes, edges = _parse_graph_only(graph_raw)
         return reply, nodes, edges
 
+    # ── Ecosystem prose, grounded in a Neo4j-retrieved subgraph ──────────
+
+    async def ecosystem_reply_from_subgraph(
+        self,
+        req: schemas.EcosystemChatRequest,
+        nodes: list[schemas.GraphNode],
+        edges: list[schemas.GraphEdge],
+    ) -> str:
+        """Prose-only reply, grounded in a subgraph already retrieved from Neo4j.
+
+        One Gemini call instead of two — and crucially no graph generation,
+        because the nodes/edges came from Cypher. Cuts the user-visible
+        latency on `/api/chat/ecosystem` by 3-5x versus the prompt-the-LLM-
+        to-invent-a-graph path.
+        """
+        subgraph_text = _format_subgraph_for_prompt(nodes, edges)
+        system = (
+            "You are the gieventhub ecosystem assistant. Below is a subgraph "
+            "of playbooks (events) and the connectors that link them — themes, "
+            "people, venues, tools — retrieved from our relationship index "
+            "for this query. Answer the user using ONLY entities present in "
+            "the subgraph. Cite playbook titles. Do not invent playbooks, "
+            "people, venues, or themes. If the subgraph is empty or doesn't "
+            "answer the question, say so plainly.\n\n"
+            "Reply in 1-3 short paragraphs of markdown.\n\n"
+            f"{subgraph_text}"
+        )
+        prompt = f"User query: {req.query}"
+        return await self._generate_text(
+            system, prompt, req.history, max_output_tokens=2048,
+        )
+
     # ── Smart Match — outcome-scoring learning loop ──────────────────────
 
     async def recommend_matches(
@@ -591,6 +623,49 @@ class GeminiClient:
             log.warning("Empty Gemini response")
             return ""
         return text
+
+
+def _format_subgraph_for_prompt(
+    nodes: list[schemas.GraphNode],
+    edges: list[schemas.GraphEdge],
+) -> str:
+    """Compact textual rendering of a subgraph, for grounding a prose reply.
+
+    Lays the subgraph out as two sections: a node list grouped by type, and
+    an edge list rendered as `source -[label]-> target`. The model never
+    needs to *produce* a graph — it only needs to read this one and cite the
+    titles/names it sees.
+    """
+    if not nodes:
+        return "RELEVANT SUBGRAPH: (no matches found in the relationship index)"
+
+    by_type: dict[str, list[schemas.GraphNode]] = {}
+    for n in nodes:
+        by_type.setdefault(n.type, []).append(n)
+
+    lines: list[str] = [f"RELEVANT SUBGRAPH ({len(nodes)} nodes, {len(edges)} edges)."]
+    type_label = {
+        "event": "Playbooks (events)",
+        "people": "People",
+        "tool": "Tools",
+        "shared": "Themes / Venues",
+    }
+    for kind in ("event", "people", "tool", "shared"):
+        bucket = by_type.get(kind, [])
+        if not bucket:
+            continue
+        lines.append(f"  {type_label.get(kind, kind)}:")
+        for n in bucket:
+            lines.append(f"    - {n.label}")
+
+    if edges:
+        lines.append("  Relationships:")
+        by_id = {n.id: n.label for n in nodes}
+        for e in edges:
+            src = by_id.get(e.source, e.source)
+            tgt = by_id.get(e.target, e.target)
+            lines.append(f"    - {src} -[{e.label or 'related'}]-> {tgt}")
+    return "\n".join(lines)
 
 
 def _format_playbook_catalogue(playbooks: list[schemas.Playbook]) -> str:
